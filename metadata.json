@@ -1,0 +1,6 @@
+{
+  "name": "SIKOWALI",
+  "description": "Sistem Komunikasi Wali Murid - Jembatan Cerdas Sekolah & Orang Tua terintegrasi dengan Analisis AI dan Chatbot.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
