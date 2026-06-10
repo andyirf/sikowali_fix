@@ -18,7 +18,7 @@ interface HeaderProps {
 export default function Header({ role, tabLabel, schoolName, schoolLogoUrl, isUsingPostgreSQL, isUsingMariaDB, onLogout, onOpenProfile, displayName }: HeaderProps) {
   const dbConnected = isUsingPostgreSQL || isUsingMariaDB;
   const showAdminBadges = role === "Admin" || role === "Administrator";
-  const roleLabel = role === "orangtua" ? "Orang Tua" : role === "kepalasekolah" ? "Kepala Sekolah" : role;
+  const roleLabel = role === "orangtua" ? "Orang Tua" : role === "WaliKelas" ? "Wali Kelas" : role === "kepalasekolah" ? "Kepala Sekolah" : role;
   const initials = (displayName || roleLabel).split(" ").map((part) => part[0]).join("").slice(0, 2).toUpperCase();
 
   return (

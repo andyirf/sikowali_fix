@@ -25,30 +25,29 @@ import DataSekolahTab from "./components/DataSekolahTab";
 import { Role, SIKOWALIDatabase, SubjectScore, AttendanceRecord, AttendanceStatus, Announcement, SchoolSettings, User as PortalUser, DisciplineType } from "./types";
 import { Sparkles, BookOpen, LogOut, CheckCircle, HelpCircle, ArrowRight, Activity, Smile, User, Lock, MessageSquare, Search, Table2, GraduationCap, Phone, X } from "lucide-react";
 
-const isDemoMode = import.meta.env.DEV;
 const LAST_ACTIVITY_KEY = "sikowali:last-activity";
 const IDLE_LOGOUT_MS = 10 * 60 * 1000;
 const KEEP_ALIVE_INTERVAL_MS = 60 * 1000;
 
 const ROLE_RESTRICTIONS: Record<string, Role[]> = {
-  "rapor": ["orangtua", "Guru", "kepalasekolah", "Murid"],
-  "absensi": ["orangtua", "Guru", "kepalasekolah", "Murid"],
-  "catatan": ["orangtua", "Guru", "kepalasekolah"],
-  "karya": ["orangtua", "Guru", "kepalasekolah", "Murid"],
-  "analisisAI": ["orangtua", "Guru", "kepalasekolah"],
-  "chatbot": ["orangtua", "Guru", "kepalasekolah", "Murid"],
-  "backupChatbot": ["Guru", "Admin", "Administrator"],
-  "notifikasi": ["orangtua", "Guru", "Murid"],
-  "pengumuman": ["orangtua", "Guru", "Admin", "Administrator", "Murid"],
-  "parenting": ["orangtua", "Guru", "kepalasekolah", "Admin", "Administrator"],
-  "wall": ["orangtua", "Guru", "Admin", "Administrator"],
-  "inputNilai": ["Guru"],
-  "inputAbsensi": ["Guru"],
-  "rekapSemester": ["Guru"],
+  "rapor": ["orangtua", "WaliKelas", "Guru", "kepalasekolah", "Murid"],
+  "absensi": ["orangtua", "WaliKelas", "Guru", "kepalasekolah", "Murid"],
+  "catatan": ["orangtua", "WaliKelas", "Guru", "kepalasekolah"],
+  "karya": ["orangtua", "WaliKelas", "Guru", "kepalasekolah", "Murid"],
+  "analisisAI": ["orangtua", "WaliKelas", "Guru", "kepalasekolah"],
+  "chatbot": ["orangtua", "WaliKelas", "Guru", "kepalasekolah", "Murid"],
+  "backupChatbot": ["WaliKelas", "Admin", "Administrator"],
+  "notifikasi": ["orangtua", "WaliKelas", "Murid"],
+  "pengumuman": ["orangtua", "WaliKelas", "Guru", "Admin", "Administrator", "Murid"],
+  "parenting": ["orangtua", "WaliKelas", "Guru", "kepalasekolah", "Admin", "Administrator"],
+  "wall": ["orangtua", "WaliKelas", "Guru", "Admin", "Administrator"],
+  "inputNilai": ["WaliKelas", "Admin", "Administrator"],
+  "inputAbsensi": ["WaliKelas"],
+  "rekapSemester": ["WaliKelas"],
   "hakAkses": ["Administrator"],
   "settingAI": ["Administrator"],
   "dataSekolah": ["Admin", "Administrator"],
-  "manajemen": ["Admin", "Administrator", "Guru"],
+  "manajemen": ["Admin", "Administrator", "WaliKelas"],
 };
 
 function readLastActivity() {
@@ -74,8 +73,8 @@ export default function App() {
   // Login credentials states
   const [isLoggedIn, setIsLoggedIn] = useState(false);
   const [selectedRole, setSelectedRole] = useState<Role>("orangtua");
-  const [loginUsername, setLoginUsername] = useState(isDemoMode ? "ortu" : "");
-  const [loginPassword, setLoginPassword] = useState(isDemoMode ? "ortu123" : "");
+  const [loginUsername, setLoginUsername] = useState("");
+  const [loginPassword, setLoginPassword] = useState("");
   const [loginError, setLoginError] = useState<string | null>(null);
   const [showForgotPasswordHelp, setShowForgotPasswordHelp] = useState(false);
   const [restoringSession, setRestoringSession] = useState(true);
@@ -127,6 +126,7 @@ export default function App() {
         if (!data?.user || !data?.db) return;
         setCurrentUser(data.user);
         setSelectedRole(data.user.role);
+        setSessionToken(data.sessionToken || "");
         setDb(data.db);
         setCurrentTab(canAccessTab(lastActivity.currentTab, data.user.role) ? lastActivity.currentTab || "beranda" : "beranda");
         if (data.db.student?.id) setSelectedStudentId(data.db.student.id);
@@ -414,7 +414,7 @@ export default function App() {
       }
       setCurrentUser(data.user);
       setSelectedRole(data.user.role);
-      setSessionToken("");
+      setSessionToken(data.sessionToken || "");
       setDb(data.db);
       if (data.db?.student?.id) setSelectedStudentId(data.db.student.id);
       if (data.db?.selectedClassName) setSelectedClassName(data.db.selectedClassName);
@@ -504,9 +504,9 @@ export default function App() {
           />
         );
       case "inputNilai":
-        return <InputNilaiTab db={db} onUpdateScores={handleUpdateScores} onSelectStudent={handleStudentChange} />;
+        return <InputNilaiTab db={db} sessionToken={sessionToken} onSelectStudent={handleStudentChange} onRefresh={() => loadDatabase()} />;
       case "inputAbsensi":
-        return <InputAbsensiTab db={db} onUpdateAttendanceDay={handleUpdateAttendanceDay} onSelectStudent={handleStudentChange} />;
+        return <InputAbsensiTab db={db} onUpdateAttendance={handleUpdateAttendance} onUpdateAttendanceDay={handleUpdateAttendanceDay} onSelectStudent={handleStudentChange} />;
       case "rekapSemester":
         return <RekapSemesterTab db={db} sessionToken={sessionToken} onSelectStudent={handleStudentChange} />;
       case "profil":
@@ -566,7 +566,7 @@ export default function App() {
   };
 
   const currentTeacher = db?.teachers?.find((teacher) => teacher.userId === currentUser?.id);
-  const canSelectStudents = ["Guru", "kepalasekolah", "Admin", "Administrator"].includes(selectedRole);
+  const canSelectStudents = ["WaliKelas", "Guru", "kepalasekolah", "Admin", "Administrator"].includes(selectedRole);
   const selectableStudents = db
     ? ["Admin", "Administrator"].includes(selectedRole)
       ? db.students || db.visibleStudents || []
@@ -583,7 +583,7 @@ export default function App() {
   const dropdownStudents = activeStudentForDropdown && !filteredSelectableStudents.some((student) => student.id === activeStudentForDropdown.id)
     ? [activeStudentForDropdown, ...filteredSelectableStudents]
     : filteredSelectableStudents;
-  const shouldPaginateStudentTable = selectedRole === "Guru" || selectedRole === "kepalasekolah";
+  const shouldPaginateStudentTable = selectedRole === "WaliKelas" || selectedRole === "Guru" || selectedRole === "kepalasekolah";
   const studentTablePageSize = 10;
   const studentTablePageCount = Math.max(1, Math.ceil(filteredSelectableStudents.length / studentTablePageSize));
   const currentStudentTablePage = Math.min(studentTablePage, studentTablePageCount);
@@ -592,14 +592,14 @@ export default function App() {
     : filteredSelectableStudents;
   const studentTableStart = filteredSelectableStudents.length === 0 ? 0 : (currentStudentTablePage - 1) * studentTablePageSize + 1;
   const studentTableEnd = Math.min(currentStudentTablePage * studentTablePageSize, filteredSelectableStudents.length);
-  const portalRoleLabel = selectedRole === "orangtua" ? "Orang Tua" : selectedRole === "kepalasekolah" ? "Kepala Sekolah" : selectedRole;
+  const portalRoleLabel = selectedRole === "orangtua" ? "Orang Tua" : selectedRole === "WaliKelas" ? "Wali Kelas" : selectedRole === "kepalasekolah" ? "Kepala Sekolah" : selectedRole;
   const portalScopedStudents = db?.visibleStudents || (db?.student ? [db.student] : []);
   const portalParentName = db?.currentUser?.name || db?.student?.parentName || "Orang Tua";
   const portalWelcomeName = selectedRole === "orangtua" ? portalParentName : db?.currentUser?.name || db?.student?.name || portalRoleLabel;
   const portalChildSummary = portalScopedStudents.map((item) => `${item.name} - ${item.className}`).join(", ");
   const portalWelcomeDetail = selectedRole === "orangtua"
     ? `Terhubung dengan ${portalScopedStudents.length} anak: ${portalChildSummary || "-"}`
-    : selectedRole === "Guru"
+    : selectedRole === "WaliKelas"
       ? `Sebagai wali kelas: ${currentTeacher?.className || portalScopedStudents[0]?.className || "belum ditentukan"}`
       : "Update otomatis dari portal utama sekolah";
   const showStudentSelectorPanel = !["Admin", "Administrator"].includes(selectedRole) || currentTab === "beranda";
@@ -686,7 +686,6 @@ export default function App() {
             <div className="space-y-2">
               <h3 className="text-xl font-extrabold text-slate-900 tracking-tight">Selamat Datang</h3>
               <p className="text-sm font-black text-[#125B3d]">{schoolName}</p>
-              <p className="text-xs text-slate-500 font-medium">Masuk dengan username dan password. Hak akses akan mengikuti role akun di database.</p>
             </div>
 
             {/* Error alerts indicator */}
@@ -734,22 +733,6 @@ export default function App() {
               </button>
             </form>
 
-            {isDemoMode && (
-              <div className="p-3.5 bg-yellow-500/10 border border-yellow-500/20 rounded-xl space-y-1.5 text-[11px] text-amber-800 font-bold">
-                <div className="flex justify-between items-center">
-                  <span>Panduan Akun Demo SIKOWALI:</span>
-                  <span className="text-[9px] uppercase bg-amber-200 px-1.5 py-0.5 rounded-md">Dev</span>
-                </div>
-                <ul className="grid grid-cols-2 gap-x-4 gap-y-1 text-[10px] text-slate-600 font-medium list-disc list-inside">
-                  <li>Orang Tua: <strong className="font-bold">ortu</strong> / ortu123</li>
-                  <li>Guru: <strong className="font-bold">guru</strong> / password123</li>
-                  <li>Admin: <strong className="font-bold">admin</strong> / password123</li>
-                  <li>Administrator: <strong className="font-bold">administrator</strong> / password123</li>
-                  <li>Murid: <strong className="font-bold">murid</strong> / password123</li>
-                  <li>Kepala Sekolah: <strong className="font-bold">kepala</strong> / password123</li>
-                </ul>
-              </div>
-            )}
           </div>
           {showForgotPasswordHelp && (
             <div className="absolute inset-0 z-20 bg-slate-950/35 backdrop-blur-sm flex items-center justify-center p-5">
@@ -840,12 +823,12 @@ export default function App() {
                   <div className="text-xs font-bold text-slate-700">
                     {selectedRole === "Murid" && "Portal murid hanya menampilkan data diri sendiri."}
                     {selectedRole === "orangtua" && "Portal orang tua hanya menampilkan anak yang terhubung."}
-                    {selectedRole === "Guru" && `Portal guru dibatasi pada kelas wali${currentTeacher ? `: ${currentTeacher.name} - ${currentTeacher.className}` : " yang ditugaskan"}.`}
-                    {selectedRole === "kepalasekolah" && "Pilih kelas untuk melihat murid di kelas tersebut."}
+                    {selectedRole === "WaliKelas" && `Portal wali kelas dibatasi pada kelas wali${currentTeacher ? `: ${currentTeacher.name} - ${currentTeacher.className}` : " yang ditugaskan"}.`}
+                    {(selectedRole === "Guru" || selectedRole === "kepalasekolah") && "Pilih kelas untuk melihat murid di kelas tersebut."}
                     {["Admin", "Administrator"].includes(selectedRole) && "Admin dapat mencari dan memilih murid dari seluruh data sekolah."}
                   </div>
                   <div className="flex-1" />
-                  {selectedRole === "kepalasekolah" && (
+                  {(selectedRole === "Guru" || selectedRole === "kepalasekolah") && (
                     <select
                       value={selectedClassName}
                       onChange={(e) => handleClassChange(e.target.value)}

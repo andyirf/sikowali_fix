@@ -99,15 +99,35 @@
   }
 
   .semester-print-area {
-    position: absolute;
-    inset: 0;
+    position: static !important;
     width: 100%;
     min-height: auto;
     border: 0 !important;
     box-shadow: none !important;
     border-radius: 0 !important;
-    padding: 18mm !important;
+    padding: 10mm !important;
     color: #0f172a !important;
+    overflow: visible !important;
+    break-inside: auto;
+  }
+
+  .semester-print-area > div {
+    break-inside: avoid;
+  }
+
+  .semester-print-area table {
+    width: 100% !important;
+    font-size: 10px !important;
+  }
+
+  .semester-print-area th,
+  .semester-print-area td {
+    padding: 4px 6px !important;
+  }
+
+  @page {
+    size: A4;
+    margin: 10mm;
   }
 
   .ai-print-area,

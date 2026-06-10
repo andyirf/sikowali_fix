@@ -6,6 +6,7 @@ import { randomUUID } from "crypto";
 import { spawn } from "child_process";
 import { createServer as createViteServer } from "vite";
 import { GoogleGenAI } from "@google/genai";
+import JSZip from "jszip";
 import { AISettings, SIKOWALIDatabase } from "./src/types.js";
 import {
   initializeDatabase,
@@ -16,6 +17,7 @@ import {
   getSchoolSettings,
   authenticateUser,
   saveScores,
+  saveScoreDetails,
   saveAttendance,
   saveAllAttendance,
   saveDailyAttendance,
@@ -37,6 +39,7 @@ import {
   createUser,
   reviewParentRegistration,
   createStudent,
+  upsertImportedStudent,
   createTeacher,
   createKarya,
   getUserById,
@@ -74,6 +77,8 @@ app.use(express.json({ limit: "10mb" }));
 const PORT = Number(process.env.PORT || 3000);
 const SESSION_TTL_MS = 10 * 60 * 1000;
 const SESSION_COOKIE_NAME = "sikowali_session";
+const UNSAFE_METHODS = new Set(["POST", "PUT", "PATCH", "DELETE"]);
+const CSRF_EXEMPT_PATHS = new Set(["/api/login", "/api/register-parent"]);
 const LOGIN_WINDOW_MS = 15 * 60 * 1000;
 const FEEDBACK_WINDOW_MS = 60 * 1000;
 const MAX_IMAGE_UPLOAD_BYTES = 2 * 1024 * 1024;
@@ -87,6 +92,107 @@ const KARYA_UPLOAD_DIR = path.join(UPLOAD_ROOT, "karya");
 const PARENTING_UPLOAD_DIR = path.join(UPLOAD_ROOT, "parenting");
 
 app.use("/uploads", express.static(UPLOAD_ROOT));
+
+function cleanCell(value: unknown) {
+  return String(value ?? "").replace(/\s+/g, " ").trim();
+}
+
+function decodeXml(value: string) {
+  return value
+    .replace(/&lt;/g, "<")
+    .replace(/&gt;/g, ">")
+    .replace(/&amp;/g, "&")
+    .replace(/&quot;/g, "\"")
+    .replace(/&apos;/g, "'");
+}
+
+function columnIndex(cellRef: string) {
+  const letters = cellRef.replace(/[0-9]/g, "").toUpperCase();
+  return letters.split("").reduce((total, letter) => total * 26 + letter.charCodeAt(0) - 64, 0) - 1;
+}
+
+async function worksheetToStudentRows(buffer: Buffer, fallbackClassName: string) {
+  const zip = await JSZip.loadAsync(buffer);
+  const sharedXml = await zip.file("xl/sharedStrings.xml")?.async("string");
+  const sharedStrings = sharedXml
+    ? Array.from(sharedXml.matchAll(/<si[^>]*>([\s\S]*?)<\/si>/g)).map((match) =>
+        decodeXml(Array.from(match[1].matchAll(/<t[^>]*>([\s\S]*?)<\/t>/g)).map((text) => text[1]).join(""))
+      )
+    : [];
+  const sheetXml = await zip.file("xl/worksheets/sheet1.xml")?.async("string");
+  if (!sheetXml) throw new Error("Sheet Excel tidak ditemukan.");
+  const rows: string[][] = [];
+  for (const rowMatch of sheetXml.matchAll(/<(?:\w+:)?row[^>]*r="(\d+)"[^>]*>([\s\S]*?)<\/(?:\w+:)?row>/g)) {
+    const rowIndex = Number(rowMatch[1]) - 1;
+    rows[rowIndex] = rows[rowIndex] || [];
+    for (const cellMatch of rowMatch[2].matchAll(/<(?:\w+:)?c[^>]*r="([A-Z]+\d+)"[^>]*(?:t="([^"]+)")?[^>]*>([\s\S]*?)<\/(?:\w+:)?c>/g)) {
+      const ref = cellMatch[1];
+      const type = cellMatch[2];
+      const body = cellMatch[3];
+      const valueMatch = body.match(/<(?:\w+:)?v[^>]*>([\s\S]*?)<\/(?:\w+:)?v>/);
+      const inlineMatch = body.match(/<(?:\w+:)?t[^>]*>([\s\S]*?)<\/(?:\w+:)?t>/);
+      const rawValue = decodeXml(valueMatch?.[1] ?? inlineMatch?.[1] ?? "");
+      rows[rowIndex][columnIndex(ref)] = type === "s" ? sharedStrings[Number(rawValue)] || "" : rawValue;
+    }
+  }
+  const normalizeHeader = (value: unknown) => cleanCell(value).toUpperCase().replace(/[^A-Z0-9]+/g, " ").trim();
+  const headerRowIndex = rows.findIndex((row) => row.some((cell) => normalizeHeader(cell) === "NIS"));
+  const headerRow = headerRowIndex >= 0 ? rows[headerRowIndex] : [];
+  const headerIndex = (...candidates: string[]) => {
+    const normalizedCandidates = candidates.map(normalizeHeader);
+    const index = headerRow.findIndex((cell) => normalizedCandidates.includes(normalizeHeader(cell)));
+    return index >= 0 ? index : null;
+  };
+  const dataStartRow = headerRowIndex >= 0 ? headerRowIndex + 2 : 5;
+  const dataRows = rows
+    .map((row, index) => ({ row, excelRow: index + 1 }))
+    .filter(({ row, excelRow }) => excelRow >= dataStartRow && row.some((cell) => cleanCell(cell)));
+  const getValue = (row: unknown[], header: number | null, fallbackIndex: number) => cleanCell(row[header ?? fallbackIndex]);
+  const nameColumnIndex = headerIndex("NAMA MURID", "NAMA SISWA", "NAMA PESERTA DIDIK", "NAMA PESERTA");
+  const nisColumnIndex = headerIndex("NIS");
+  const nisnColumnIndex = headerIndex("NISN");
+  const genderColumnIndex = headerIndex("L/P", "LP", "JENIS KELAMIN");
+  const birthPlaceColumnIndex = headerIndex("TEMPAT LAHIR");
+  const birthDateColumnIndex = headerIndex("TANGGAL LAHIR");
+  const religionColumnIndex = headerIndex("AGAMA");
+  const previousSchoolColumnIndex = headerIndex("PENDIDIKAN SEBELUMNYA");
+  const addressColumnIndex = headerIndex("ALAMAT PESERTA DIDIK", "ALAMAT SISWA");
+  const districtColumnIndex = headerIndex("KEC SISWA", "KEC", "KECAMATAN SISWA");
+  const cityColumnIndex = headerIndex("KAB SISWA", "KAB", "KABUPATEN SISWA", "KOTA SISWA");
+  const provinceColumnIndex = headerIndex("PROV SISWA", "PROV", "PROVINSI SISWA", "PROPINSI SISWA");
+  const fatherNameColumnIndex = headerIndex("NAMA AYAH");
+  const motherNameColumnIndex = headerIndex("NAMA IBU");
+  const fatherJobColumnIndex = headerIndex("PEKERJAAN AYAH");
+  const motherJobColumnIndex = headerIndex("PEKERJAAN IBU");
+  const parentStreetColumnIndex = headerIndex("ALAMAT ORANG TUA", "JALAN ORANG TUA");
+  const parentVillageColumnIndex = headerIndex("DESA ORANG TUA", "KELURAHAN DESA", "KELURAHAN DESA ORANG TUA");
+
+  return dataRows.map(({ row, excelRow }) => {
+    const nis = getValue(row, nisColumnIndex, 1);
+    return {
+      excelRow,
+      name: getValue(row, nameColumnIndex, 21),
+      nis,
+      className: fallbackClassName,
+      nisn: getValue(row, nisnColumnIndex, 2),
+      gender: getValue(row, genderColumnIndex, 3),
+      birthPlace: getValue(row, birthPlaceColumnIndex, 4),
+      birthDate: getValue(row, birthDateColumnIndex, 5),
+      religion: getValue(row, religionColumnIndex, 6),
+      previousSchool: getValue(row, previousSchoolColumnIndex, 7),
+      address: getValue(row, addressColumnIndex, 8),
+      district: getValue(row, districtColumnIndex, 9),
+      city: getValue(row, cityColumnIndex, 10),
+      province: getValue(row, provinceColumnIndex, 11),
+      fatherName: getValue(row, fatherNameColumnIndex, 12),
+      motherName: getValue(row, motherNameColumnIndex, 13),
+      fatherJob: getValue(row, fatherJobColumnIndex, 14),
+      motherJob: getValue(row, motherJobColumnIndex, 15),
+      parentAddressStreet: getValue(row, parentStreetColumnIndex, 16),
+      parentAddressVillage: getValue(row, parentVillageColumnIndex, 17),
+    };
+  });
+}
 
 function isRateLimited(bucket: Map<string, { count: number; resetAt: number }>, key: string, max: number, windowMs: number) {
   const now = Date.now();
@@ -182,6 +288,73 @@ function getSessionToken(req: express.Request) {
   return headerToken || cookieToken;
 }
 
+function normalizeOrigin(value = "") {
+  try {
+    const parsed = new URL(value);
+    return parsed.origin;
+  } catch {
+    return "";
+  }
+}
+
+function getAllowedOrigins(req: express.Request) {
+  const host = String(req.headers.host || "");
+  const forwardedProto = String(req.headers["x-forwarded-proto"] || "").split(",")[0].trim();
+  const protocol = forwardedProto || req.protocol || (process.env.NODE_ENV === "production" ? "https" : "http");
+  const configuredOrigins = [
+    process.env.APP_URL,
+    process.env.FRONTEND_URL,
+    process.env.ALLOWED_ORIGINS,
+  ]
+    .filter(Boolean)
+    .flatMap((value) => String(value).split(","))
+    .map((value) => normalizeOrigin(value.trim()))
+    .filter(Boolean);
+  const requestOrigin = host ? `${protocol}://${host}` : "";
+  return new Set([requestOrigin, ...configuredOrigins].filter(Boolean));
+}
+
+function isAllowedRequestOrigin(req: express.Request, requestOrigin: string) {
+  if (!requestOrigin) return false;
+  if (getAllowedOrigins(req).has(requestOrigin)) return true;
+  try {
+    const requestHost = String(req.headers.host || "");
+    return !!requestHost && new URL(requestOrigin).host === requestHost;
+  } catch {
+    return false;
+  }
+}
+
+function getRequestOrigin(req: express.Request) {
+  const origin = normalizeOrigin(String(req.headers.origin || ""));
+  if (origin) return origin;
+  return normalizeOrigin(String(req.headers.referer || ""));
+}
+
+function protectUnsafeRequests(req: express.Request, res: express.Response, next: express.NextFunction) {
+  if (!UNSAFE_METHODS.has(req.method)) return next();
+
+  const requestOrigin = getRequestOrigin(req);
+  if (requestOrigin && !isAllowedRequestOrigin(req, requestOrigin)) {
+    return res.status(403).json({ error: "Request ditolak karena origin tidak diizinkan." });
+  }
+  if (!requestOrigin && process.env.NODE_ENV === "production") {
+    return res.status(403).json({ error: "Request ditolak karena origin tidak terverifikasi." });
+  }
+
+  if (CSRF_EXEMPT_PATHS.has(req.path)) return next();
+
+  const headerToken = String(req.headers["x-session-token"] || "");
+  const cookieToken = parseCookies(String(req.headers.cookie || ""))[SESSION_COOKIE_NAME] || "";
+  if (cookieToken && headerToken !== cookieToken) {
+    return res.status(403).json({ error: "Request ditolak karena token CSRF tidak valid." });
+  }
+
+  return next();
+}
+
+app.use(protectUnsafeRequests);
+
 function isAdminLike(role?: string) {
   return role === "Admin" || role === "Administrator";
 }
@@ -190,8 +363,17 @@ function isAdministrator(role?: string) {
   return role === "Administrator";
 }
 
+function isWaliKelas(role?: string) {
+  return role === "WaliKelas";
+}
+
+function isKepalaLike(role?: string) {
+  return role === "Guru" || role === "kepalasekolah";
+}
+
 function portalLabel(role?: string) {
   if (role === "orangtua") return "Portal Orang Tua";
+  if (role === "WaliKelas") return "Portal Wali Kelas";
   if (role === "Guru") return "Portal Guru";
   if (role === "Admin") return "Portal Admin";
   if (role === "Administrator") return "Portal Administrator";
@@ -202,8 +384,9 @@ function portalLabel(role?: string) {
 
 function sanitizePortalDatabase(db: SIKOWALIDatabase, sessionUser: any) {
   const scopedStudents = db.visibleStudents?.length ? db.visibleStudents : db.student ? [db.student] : [];
-  const canSeeManagementData = isAdminLike(sessionUser?.role) || sessionUser?.role === "Guru" || sessionUser?.role === "kepalasekolah";
+  const canSeeManagementData = isAdminLike(sessionUser?.role) || isWaliKelas(sessionUser?.role) || isKepalaLike(sessionUser?.role);
   const scopedClasses = new Set(scopedStudents.map((student) => student.className));
+  const scopedParentUsers = (db.users || []).filter((user) => user.role === "orangtua");
   const publicTeachers = (db.teachers || [])
     .filter((teacher) => scopedClasses.has(teacher.className))
     .map((teacher) => ({ ...teacher, phone: "", graduate: "", address: "", email: "" }));
@@ -211,7 +394,7 @@ function sanitizePortalDatabase(db: SIKOWALIDatabase, sessionUser: any) {
   return {
     ...db,
     students: canSeeManagementData ? db.students : scopedStudents,
-    users: isAdminLike(sessionUser?.role) ? db.users : [],
+    users: isAdminLike(sessionUser?.role) ? db.users : isWaliKelas(sessionUser?.role) ? scopedParentUsers : [],
     teachers: canSeeManagementData ? db.teachers : publicTeachers,
     aiSettings: isAdministrator(sessionUser?.role) ? db.aiSettings : undefined,
     accessMatrix: isAdministrator(sessionUser?.role) ? db.accessMatrix : [],
@@ -219,6 +402,25 @@ function sanitizePortalDatabase(db: SIKOWALIDatabase, sessionUser: any) {
 }
 
 async function assertCanManageUserRole(sessionUser: any, targetUserId?: string, nextRole?: string) {
+  if (isWaliKelas(sessionUser?.role)) {
+    if (nextRole && nextRole !== "orangtua") {
+      return "Wali kelas hanya dapat membuat atau mengubah user role orang tua.";
+    }
+    if (targetUserId) {
+      const target = await getUserById(targetUserId);
+      if (target?.role !== "orangtua") {
+        return "Wali kelas hanya dapat mengubah user role orang tua.";
+      }
+      const portal = await getPortalDatabase(sessionUser.id);
+      const visibleStudentIds = new Set((portal.visibleStudents || []).map((student) => student.id));
+      const linkedStudents = (await getAllStudents()).filter((student) => student.parentId === targetUserId);
+      const isLinkedOutsideClass = linkedStudents.some((student) => !visibleStudentIds.has(student.id));
+      if (isLinkedOutsideClass) {
+        return "Wali kelas hanya dapat mengelola orang tua yang terhubung dengan kelas walinya.";
+      }
+    }
+    return null;
+  }
   if (isAdministrator(sessionUser?.role)) return null;
   const protectedRoles = ["Admin", "Administrator"];
   if (nextRole && protectedRoles.includes(nextRole)) {
@@ -378,6 +580,7 @@ app.get("/api/db", async (req, res) => {
 app.get("/api/session", async (req, res) => {
   try {
     const sessionUser = getSessionUser(req);
+    const token = getSessionToken(req);
     if (!sessionUser) {
       return res.status(401).json({ error: "Sesi login tidak aktif." });
     }
@@ -386,7 +589,7 @@ app.get("/api/session", async (req, res) => {
       String(req.query.studentId || ""),
       String(req.query.className || "")
     );
-    res.json({ success: true, user: sessionUser, db: sanitizePortalDatabase(db, sessionUser) });
+    res.json({ success: true, user: sessionUser, sessionToken: token, db: sanitizePortalDatabase(db, sessionUser) });
   } catch (err: any) {
     res.status(500).json({ error: "Gagal memulihkan sesi login.", details: err.message });
   }
@@ -425,7 +628,7 @@ app.post("/api/login", async (req, res) => {
     sessions.set(token, { user, expiresAt: Date.now() + SESSION_TTL_MS });
     setSessionCookie(res, token);
     const db = await getPortalDatabase(user.id);
-    res.json({ success: true, user, db: sanitizePortalDatabase(db, user) });
+    res.json({ success: true, user, sessionToken: token, db: sanitizePortalDatabase(db, user) });
   } catch (err: any) {
     res.status(500).json({ error: "Gagal login.", details: err.message });
   }
@@ -457,13 +660,13 @@ app.get("/api/students", async (req, res) => {
 app.post("/api/scores", async (req, res) => {
   const { scores, studentId } = req.body;
   const sessionUser = getSessionUser(req);
-  if (!sessionUser || sessionUser.role !== "Guru") {
-    return res.status(403).json({ error: "Hanya guru yang dapat mengubah nilai." });
+  if (!sessionUser || !(isWaliKelas(sessionUser.role) || isAdminLike(sessionUser.role))) {
+    return res.status(403).json({ error: "Hanya wali kelas, admin, dan administrator yang dapat mengubah nilai." });
   }
   if (Array.isArray(scores)) {
     try {
       const portal = await getPortalDatabase(sessionUser.id, studentId);
-      if (studentId && portal.student.id !== studentId) {
+      if (isWaliKelas(sessionUser.role) && studentId && portal.student.id !== studentId) {
         return res.status(403).json({ error: "Anda tidak memiliki akses ke murid ini." });
       }
       const computed = scores.map(s => {
@@ -480,11 +683,33 @@ app.post("/api/scores", async (req, res) => {
   }
 });
 
+app.post("/api/score-details", async (req, res) => {
+  const { studentId, details } = req.body;
+  const sessionUser = getSessionUser(req);
+  if (!sessionUser || !(isWaliKelas(sessionUser.role) || isAdminLike(sessionUser.role))) {
+    return res.status(403).json({ error: "Hanya wali kelas, admin, dan administrator yang dapat mengubah detail nilai." });
+  }
+  if (!studentId || !Array.isArray(details)) {
+    return res.status(400).json({ error: "Data detail nilai tidak lengkap." });
+  }
+  try {
+    const portal = await getPortalDatabase(sessionUser.id, studentId);
+    if (isWaliKelas(sessionUser.role) && portal.student.id !== studentId) {
+      return res.status(403).json({ error: "Anda tidak memiliki akses ke murid ini." });
+    }
+    const scoreDetails = await saveScoreDetails(studentId, details);
+    const refreshed = await getPortalDatabase(sessionUser.id, studentId, portal.selectedClassName);
+    res.json({ success: true, scoreDetails, scores: refreshed.scores });
+  } catch (err: any) {
+    res.status(500).json({ error: "Gagal menyimpan detail nilai", details: err.message });
+  }
+});
+
 app.post("/api/attendance", async (req, res) => {
   const { index, record, studentId } = req.body;
   const sessionUser = getSessionUser(req);
-  if (!sessionUser || sessionUser.role !== "Guru") {
-    return res.status(403).json({ error: "Hanya guru yang dapat mengubah absensi." });
+  if (!sessionUser || !isWaliKelas(sessionUser.role)) {
+    return res.status(403).json({ error: "Hanya wali kelas yang dapat mengubah absensi." });
   }
   try {
     const portal = await getPortalDatabase(sessionUser.id, studentId);
@@ -511,8 +736,8 @@ app.post("/api/attendance", async (req, res) => {
 app.post("/api/attendance/day", async (req, res) => {
   const { studentId, date, status, note } = req.body;
   const sessionUser = getSessionUser(req);
-  if (!sessionUser || sessionUser.role !== "Guru") {
-    return res.status(403).json({ error: "Hanya guru yang dapat mengubah absensi." });
+  if (!sessionUser || !isWaliKelas(sessionUser.role)) {
+    return res.status(403).json({ error: "Hanya wali kelas yang dapat mengubah absensi." });
   }
   if (!studentId || !date || !["hadir", "sakit", "izin", "alpha"].includes(status)) {
     return res.status(400).json({ error: "Tanggal, murid, dan status absensi wajib diisi." });
@@ -537,8 +762,8 @@ app.post("/api/attendance/day", async (req, res) => {
 app.post("/api/behaviour", async (req, res) => {
   const { studentId, type, title, description } = req.body;
   const sessionUser = getSessionUser(req);
-  if (!sessionUser || !["Guru", "kepalasekolah"].includes(sessionUser.role)) {
-    return res.status(403).json({ error: "Hanya guru dan kepala sekolah yang dapat menambahkan catatan perilaku." });
+  if (!sessionUser || !(isWaliKelas(sessionUser.role) || isKepalaLike(sessionUser.role))) {
+    return res.status(403).json({ error: "Hanya wali kelas, guru, dan kepala sekolah yang dapat menambahkan catatan perilaku." });
   }
   if (!studentId || !title || !description || !["Positif", "Prestasi", "Perlu Perhatian"].includes(type)) {
     return res.status(400).json({ error: "Murid, jenis catatan, judul, dan deskripsi wajib diisi." });
@@ -548,7 +773,7 @@ app.post("/api/behaviour", async (req, res) => {
     if (portal.student.id !== studentId) {
       return res.status(403).json({ error: "Anda tidak memiliki akses ke murid ini." });
     }
-    const sourcePortal = sessionUser.role === "kepalasekolah" ? "Portal Kepala Sekolah" : "Portal Guru";
+    const sourcePortal = isWaliKelas(sessionUser.role) ? "Portal Wali Kelas" : sessionUser.role === "kepalasekolah" ? "Portal Kepala Sekolah" : "Portal Guru";
     const behaviour = await createBehaviourLog({
       studentId,
       type,
@@ -566,8 +791,8 @@ app.post("/api/behaviour", async (req, res) => {
 app.get("/api/chatbot-backups", async (req, res) => {
   try {
     const sessionUser = getSessionUser(req);
-    if (!sessionUser || !["Guru", "Admin", "Administrator"].includes(sessionUser.role)) {
-      return res.status(403).json({ error: "Hanya guru, admin, dan administrator yang dapat melihat backup chatbot." });
+    if (!sessionUser || !["WaliKelas", "Admin", "Administrator"].includes(sessionUser.role)) {
+      return res.status(403).json({ error: "Hanya wali kelas, admin, dan administrator yang dapat melihat backup chatbot." });
     }
     const backups = await getChatbotBackups(sessionUser);
     res.json({ success: true, backups });
@@ -579,8 +804,8 @@ app.get("/api/chatbot-backups", async (req, res) => {
 app.get("/api/class-semester-report", async (req, res) => {
   try {
     const sessionUser = getSessionUser(req);
-    if (!sessionUser || sessionUser.role !== "Guru") {
-      return res.status(403).json({ error: "Hanya guru yang dapat membaca rekap semester kelas." });
+    if (!sessionUser || !isWaliKelas(sessionUser.role)) {
+      return res.status(403).json({ error: "Hanya wali kelas yang dapat membaca rekap semester kelas." });
     }
     const baseDb = await getPortalDatabase(sessionUser.id, "", String(req.query.className || ""));
     const students = baseDb.visibleStudents || [];
@@ -603,8 +828,8 @@ app.get("/api/class-semester-report", async (req, res) => {
 app.post("/api/admin/users", async (req, res) => {
   try {
     const sessionUser = getSessionUser(req);
-    if (!sessionUser || !isAdminLike(sessionUser.role)) {
-      return res.status(403).json({ error: "Hanya admin yang dapat menambahkan user." });
+    if (!sessionUser || !(isAdminLike(sessionUser.role) || isWaliKelas(sessionUser.role))) {
+      return res.status(403).json({ error: "Hanya admin atau wali kelas yang dapat menambahkan user." });
     }
     const { username, password, role, name, email, phone } = req.body;
     if (!username || !password || !role || !name) {
@@ -641,8 +866,8 @@ app.patch("/api/admin/parent-registrations/:id", async (req, res) => {
 app.put("/api/admin/users/:id", async (req, res) => {
   try {
     const sessionUser = getSessionUser(req);
-    if (!sessionUser || !isAdminLike(sessionUser.role)) {
-      return res.status(403).json({ error: "Hanya admin yang dapat mengubah user." });
+    if (!sessionUser || !(isAdminLike(sessionUser.role) || isWaliKelas(sessionUser.role))) {
+      return res.status(403).json({ error: "Hanya admin atau wali kelas yang dapat mengubah user." });
     }
     const roleError = await assertCanManageUserRole(sessionUser, req.params.id, req.body.role);
     if (roleError) {
@@ -658,8 +883,8 @@ app.put("/api/admin/users/:id", async (req, res) => {
 app.patch("/api/admin/users/:id/enabled", async (req, res) => {
   try {
     const sessionUser = getSessionUser(req);
-    if (!sessionUser || !isAdminLike(sessionUser.role)) {
-      return res.status(403).json({ error: "Hanya admin yang dapat mengubah status user." });
+    if (!sessionUser || !(isAdminLike(sessionUser.role) || isWaliKelas(sessionUser.role))) {
+      return res.status(403).json({ error: "Hanya admin atau wali kelas yang dapat mengubah status user." });
     }
     const roleError = await assertCanManageUserRole(sessionUser, req.params.id);
     if (roleError) {
@@ -675,8 +900,8 @@ app.patch("/api/admin/users/:id/enabled", async (req, res) => {
 app.delete("/api/admin/users/:id", async (req, res) => {
   try {
     const sessionUser = getSessionUser(req);
-    if (!sessionUser || !isAdminLike(sessionUser.role)) {
-      return res.status(403).json({ error: "Hanya admin yang dapat menghapus user." });
+    if (!sessionUser || !(isAdminLike(sessionUser.role) || isWaliKelas(sessionUser.role))) {
+      return res.status(403).json({ error: "Hanya admin atau wali kelas yang dapat menghapus user." });
     }
     const roleError = await assertCanManageUserRole(sessionUser, req.params.id);
     if (roleError) {
@@ -692,38 +917,86 @@ app.delete("/api/admin/users/:id", async (req, res) => {
 app.post("/api/admin/students", async (req, res) => {
   try {
     const sessionUser = getSessionUser(req);
-    if (!sessionUser || !(isAdminLike(sessionUser.role) || sessionUser.role === "Guru")) {
-      return res.status(403).json({ error: "Hanya admin atau guru yang dapat menambahkan murid." });
+    if (!sessionUser || !(isAdminLike(sessionUser.role) || isWaliKelas(sessionUser.role))) {
+      return res.status(403).json({ error: "Hanya admin atau wali kelas yang dapat menambahkan murid." });
     }
     const { name, nis, className, parentName, parentId, userId } = req.body;
     if (!name || !nis || !className || !parentId) {
       return res.status(400).json({ error: "Nama murid, NIS, kelas, dan akun orang tua wajib dipilih." });
     }
-    if (sessionUser.role === "Guru") {
+    if (isWaliKelas(sessionUser.role)) {
       const portal = await getPortalDatabase(sessionUser.id);
       const classNames = new Set((portal.visibleStudents || []).map((s) => s.className));
       if (!classNames.has(className)) {
-        return res.status(403).json({ error: "Guru hanya dapat menambahkan murid ke kelas walinya." });
+        return res.status(403).json({ error: "Wali kelas hanya dapat menambahkan murid ke kelas walinya." });
       }
     }
-    const student = await createStudent({ name, nis, className, parentName, parentId, userId });
+    const student = await createStudent({ ...req.body, name, nis, className, parentName, parentId, userId });
     res.json({ success: true, student });
   } catch (err: any) {
     res.status(500).json({ error: err.message || "Gagal menambahkan murid." });
   }
 });
 
+app.post("/api/admin/students/import-excel", async (req, res) => {
+  try {
+    const sessionUser = getSessionUser(req);
+    if (!sessionUser || !(isAdminLike(sessionUser.role) || isWaliKelas(sessionUser.role))) {
+      return res.status(403).json({ error: "Hanya admin atau wali kelas yang dapat mengimport murid." });
+    }
+    const { fileData, className, dryRun } = req.body;
+    const targetClassName = cleanCell(className);
+    if (!fileData || !targetClassName) {
+      return res.status(400).json({ error: "File Excel dan kelas tujuan wajib dipilih." });
+    }
+    if (isWaliKelas(sessionUser.role)) {
+      const portal = await getPortalDatabase(sessionUser.id);
+      const classNames = new Set((portal.visibleStudents || []).map((s) => s.className));
+      if (!classNames.has(targetClassName)) {
+        return res.status(403).json({ error: "Wali kelas hanya dapat mengimport murid ke kelas walinya." });
+      }
+    }
+    const base64 = String(fileData).includes(",") ? String(fileData).split(",").pop() || "" : String(fileData);
+    const rows = await worksheetToStudentRows(Buffer.from(base64, "base64"), targetClassName);
+    const errors: string[] = [];
+    const validRows = rows.filter((row) => {
+      if (!row.nis) {
+        errors.push(`Baris ${row.excelRow}: NIS kosong.`);
+        return false;
+      }
+      if (!row.name) {
+        errors.push(`Baris ${row.excelRow}: nama murid kosong. Tambahkan kolom Nama Murid pada file Excel.`);
+        return false;
+      }
+      return true;
+    });
+    if (dryRun) {
+      return res.json({ success: true, totalRows: rows.length, validRows: validRows.length, errors, preview: validRows.slice(0, 5) });
+    }
+    let created = 0;
+    let updated = 0;
+    for (const row of validRows) {
+      const result = await upsertImportedStudent(row);
+      if (result.action === "created") created += 1;
+      else updated += 1;
+    }
+    res.json({ success: true, totalRows: rows.length, validRows: validRows.length, created, updated, errors });
+  } catch (err: any) {
+    res.status(500).json({ error: err.message || "Gagal import Excel murid." });
+  }
+});
+
 app.put("/api/admin/students/:id", async (req, res) => {
   try {
     const sessionUser = getSessionUser(req);
-    if (!sessionUser || !(isAdminLike(sessionUser.role) || sessionUser.role === "Guru")) {
-      return res.status(403).json({ error: "Hanya admin atau guru wali kelas yang dapat mengubah data murid." });
+    if (!sessionUser || !(isAdminLike(sessionUser.role) || isWaliKelas(sessionUser.role))) {
+      return res.status(403).json({ error: "Hanya admin atau wali kelas yang dapat mengubah data murid." });
     }
     let payload = req.body;
-    if (sessionUser.role === "Guru") {
+    if (isWaliKelas(sessionUser.role)) {
       const portal = await getPortalDatabase(sessionUser.id, req.params.id);
       if (portal.student.id !== req.params.id) {
-        return res.status(403).json({ error: "Guru hanya dapat mengubah murid dalam kelas walinya." });
+        return res.status(403).json({ error: "Wali kelas hanya dapat mengubah murid dalam kelas walinya." });
       }
       payload = { ...req.body, className: portal.student.className };
     }
@@ -737,13 +1010,13 @@ app.put("/api/admin/students/:id", async (req, res) => {
 app.patch("/api/admin/students/:id/enabled", async (req, res) => {
   try {
     const sessionUser = getSessionUser(req);
-    if (!sessionUser || !(isAdminLike(sessionUser.role) || sessionUser.role === "Guru")) {
-      return res.status(403).json({ error: "Hanya admin atau guru wali kelas yang dapat mengubah status murid." });
+    if (!sessionUser || !(isAdminLike(sessionUser.role) || isWaliKelas(sessionUser.role))) {
+      return res.status(403).json({ error: "Hanya admin atau wali kelas yang dapat mengubah status murid." });
     }
-    if (sessionUser.role === "Guru") {
+    if (isWaliKelas(sessionUser.role)) {
       const portal = await getPortalDatabase(sessionUser.id, req.params.id);
       if (portal.student.id !== req.params.id) {
-        return res.status(403).json({ error: "Guru hanya dapat mengubah status murid dalam kelas walinya." });
+        return res.status(403).json({ error: "Wali kelas hanya dapat mengubah status murid dalam kelas walinya." });
       }
     }
     const student = await updateStudent(req.params.id, { enabled: !!req.body.enabled });
@@ -756,13 +1029,13 @@ app.patch("/api/admin/students/:id/enabled", async (req, res) => {
 app.delete("/api/admin/students/:id", async (req, res) => {
   try {
     const sessionUser = getSessionUser(req);
-    if (!sessionUser || !(isAdminLike(sessionUser.role) || sessionUser.role === "Guru")) {
-      return res.status(403).json({ error: "Hanya admin atau guru wali kelas yang dapat menghapus murid." });
+    if (!sessionUser || !(isAdminLike(sessionUser.role) || isWaliKelas(sessionUser.role))) {
+      return res.status(403).json({ error: "Hanya admin atau wali kelas yang dapat menghapus murid." });
     }
-    if (sessionUser.role === "Guru") {
+    if (isWaliKelas(sessionUser.role)) {
       const portal = await getPortalDatabase(sessionUser.id, req.params.id);
       if (portal.student.id !== req.params.id) {
-        return res.status(403).json({ error: "Guru hanya dapat menghapus murid dalam kelas walinya." });
+        return res.status(403).json({ error: "Wali kelas hanya dapat menghapus murid dalam kelas walinya." });
       }
     }
     await deleteStudent(req.params.id);
@@ -834,9 +1107,9 @@ app.post("/api/admin/classes", async (req, res) => {
     if (!sessionUser || !isAdminLike(sessionUser.role)) {
       return res.status(403).json({ error: "Hanya admin yang dapat menambahkan kelas." });
     }
-    const { name, homeroomTeacherId } = req.body;
+    const { name, homeroomTeacherId, academicYear, semester } = req.body;
     if (!String(name || "").trim()) return res.status(400).json({ error: "Nama kelas wajib diisi." });
-    res.json({ success: true, classRoom: await createClass({ name, homeroomTeacherId }) });
+    res.json({ success: true, classRoom: await createClass({ name, homeroomTeacherId, academicYear, semester }) });
   } catch (err: any) {
     res.status(500).json({ error: err.message || "Gagal menambahkan kelas." });
   }
@@ -848,9 +1121,9 @@ app.put("/api/admin/classes/:id", async (req, res) => {
     if (!sessionUser || !isAdminLike(sessionUser.role)) {
       return res.status(403).json({ error: "Hanya admin yang dapat mengubah kelas." });
     }
-    const { name, homeroomTeacherId } = req.body;
+    const { name, homeroomTeacherId, academicYear, semester } = req.body;
     if (!String(name || "").trim()) return res.status(400).json({ error: "Nama kelas wajib diisi." });
-    res.json({ success: true, classRoom: await updateClass(req.params.id, { name, homeroomTeacherId }) });
+    res.json({ success: true, classRoom: await updateClass(req.params.id, { name, homeroomTeacherId, academicYear, semester }) });
   } catch (err: any) {
     res.status(500).json({ error: err.message || "Gagal mengubah kelas." });
   }
@@ -895,6 +1168,9 @@ app.post("/api/admin/ai-settings", async (req, res) => {
 
 app.post("/api/admin/restart", async (req, res) => {
   try {
+    if (process.env.NODE_ENV === "production") {
+      return res.status(403).json({ error: "Restart aplikasi dinonaktifkan di mode produksi. Gunakan process manager atau panel server." });
+    }
     const sessionUser = getSessionUser(req);
     if (!sessionUser || !isAdministrator(sessionUser.role)) {
       return res.status(403).json({ error: "Hanya Administrator yang dapat me-restart aplikasi." });
@@ -951,8 +1227,8 @@ app.patch("/api/admin/access-permissions", async (req, res) => {
 app.post("/api/comment-karya", async (req, res) => {
   const { karyaId, author, text } = req.body;
   const sessionUser = getSessionUser(req);
-  if (!sessionUser || !(sessionUser.role === "Guru" || isAdminLike(sessionUser.role))) {
-    return res.status(403).json({ error: "Dokumentasi & Karya hanya dapat dikomentari oleh guru atau admin." });
+  if (!sessionUser || !(isWaliKelas(sessionUser.role) || isAdminLike(sessionUser.role))) {
+    return res.status(403).json({ error: "Dokumentasi & Karya hanya dapat dikomentari oleh wali kelas atau admin." });
   }
   if (!karyaId || !text) {
     return res.status(400).json({ error: "karyaId and text are required" });
@@ -968,16 +1244,16 @@ app.post("/api/comment-karya", async (req, res) => {
 app.post("/api/karya", async (req, res) => {
   try {
     const sessionUser = getSessionUser(req);
-    if (!sessionUser || !(sessionUser.role === "Guru" || isAdminLike(sessionUser.role))) {
-      return res.status(403).json({ error: "Hanya guru atau admin yang dapat menambahkan dokumentasi karya." });
+    if (!sessionUser || !(isWaliKelas(sessionUser.role) || isAdminLike(sessionUser.role))) {
+      return res.status(403).json({ error: "Hanya wali kelas atau admin yang dapat menambahkan dokumentasi karya." });
     }
     const { studentId, title, category, description, imageUrl } = req.body;
     if (!studentId || !title || !category || !description) {
       return res.status(400).json({ error: "studentId, judul, kategori, dan deskripsi wajib diisi." });
     }
     const portal = await getPortalDatabase(sessionUser.id, studentId);
-    if (sessionUser.role === "Guru" && portal.student.id !== studentId) {
-      return res.status(403).json({ error: "Guru hanya dapat menambah karya untuk murid dalam kelas walinya." });
+    if (isWaliKelas(sessionUser.role) && portal.student.id !== studentId) {
+      return res.status(403).json({ error: "Wali kelas hanya dapat menambah karya untuk murid dalam kelas walinya." });
     }
     const fallbackImage = "https://images.unsplash.com/photo-1503676260728-1c00da094a0b?w=500&auto=format&fit=crop&q=60";
     const karya = await createKarya({ studentId, title, category, description, imageUrl: imageUrl || fallbackImage });
@@ -1027,8 +1303,8 @@ app.post("/api/announcements", async (req, res) => {
   }
   try {
     const sessionUser = getSessionUser(req);
-    if (!sessionUser || !(["Guru", "kepalasekolah"].includes(sessionUser.role) || isAdminLike(sessionUser.role))) {
-      return res.status(403).json({ error: "Hanya guru, kepala sekolah, atau admin yang dapat membuat pengumuman." });
+    if (!sessionUser || !(["WaliKelas", "Guru", "kepalasekolah"].includes(sessionUser.role) || isAdminLike(sessionUser.role))) {
+      return res.status(403).json({ error: "Hanya wali kelas, guru, kepala sekolah, atau admin yang dapat membuat pengumuman." });
     }
     const imageUrl = await persistDataUrl(req.body.imageUrl || "", GENERAL_UPLOAD_DIR, "files");
     const result = await postAnnouncement(title, content, category, author, !!isImportant, imageUrl);
@@ -1039,7 +1315,7 @@ app.post("/api/announcements", async (req, res) => {
 });
 
 function canManageParenting(role?: string) {
-  return role === "Guru" || role === "kepalasekolah" || isAdminLike(role);
+  return role === "WaliKelas" || role === "Guru" || role === "kepalasekolah" || isAdminLike(role);
 }
 
 app.post("/api/parenting", async (req, res) => {

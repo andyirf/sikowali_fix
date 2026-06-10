@@ -1,6 +1,6 @@
 import React, { useEffect, useMemo, useState } from "react";
 import { Award, CalendarDays, Download, FileText, Printer, RefreshCw, UserRound, UsersRound } from "lucide-react";
-import { AttendanceRecord, BehaviourLog, SIKOWALIDatabase, Student, SubjectScore } from "../types";
+import { AttendanceRecord, BehaviourLog, SIKOWALIDatabase, Student, StudentScoreDetail, SubjectScore } from "../types";
 
 interface RekapSemesterTabProps {
   db: SIKOWALIDatabase;
@@ -24,6 +24,10 @@ function normalizeSemester(value?: string) {
   return value?.toLowerCase() === "ganjil" ? "Ganjil" : "Genap";
 }
 
+function defaultReportSemester(db: SIKOWALIDatabase) {
+  return normalizeSemester(db.scoreDetails?.[0]?.semester || db.schoolSettings?.semester);
+}
+
 function monthName(date: string) {
   return new Date(`${date}T00:00:00`).toLocaleDateString("id-ID", { month: "long" });
 }
@@ -35,7 +39,45 @@ function isBehaviourInSemester(item: BehaviourLog, semester: "Ganjil" | "Genap")
 }
 
 function printPdf() {
-  window.print();
+  const printArea = document.querySelector(".semester-print-area");
+  if (!printArea) {
+    window.print();
+    return;
+  }
+  const printWindow = window.open("", "_blank", "width=900,height=1200");
+  if (!printWindow) {
+    window.print();
+    return;
+  }
+  const styles = Array.from(document.querySelectorAll("link[rel='stylesheet'], style"))
+    .map((node) => node.outerHTML)
+    .join("\n");
+  printWindow.document.write(`<!doctype html>
+    <html>
+      <head>
+        <title>Rekap Semester</title>
+        ${styles}
+        <style>
+          @page { size: A4; margin: 10mm; }
+          body { background: #fff; color: #0f172a; font-family: Arial, sans-serif; }
+          .semester-print-area { border: 0 !important; box-shadow: none !important; padding: 0 !important; width: 100% !important; }
+          .print\\:hidden, button { display: none !important; }
+          table { width: 100% !important; border-collapse: collapse !important; font-size: 10px !important; }
+          th, td { border: 1px solid #cbd5e1 !important; padding: 5px 7px !important; vertical-align: top; }
+          th { background: #f1f5f9 !important; color: #334155 !important; }
+          tr { break-inside: avoid; }
+          .pdf-section { break-inside: avoid; margin-top: 14px; }
+          .pdf-signature { break-inside: avoid; }
+        </style>
+      </head>
+      <body>${printArea.outerHTML}</body>
+    </html>`);
+  printWindow.document.close();
+  printWindow.focus();
+  setTimeout(() => {
+    printWindow.print();
+    printWindow.close();
+  }, 350);
 }
 
 function summarizeAttendance(attendance: AttendanceRecord[], semester: "Ganjil" | "Genap") {
@@ -58,21 +100,47 @@ function averageScore(scores: SubjectScore[]) {
   return scores.length ? Math.round(scores.reduce((sum, item) => sum + item.rataRata, 0) / scores.length) : 0;
 }
 
+function isScoreDetailInSemester(item: StudentScoreDetail, semester: "Ganjil" | "Genap") {
+  return normalizeSemester(item.semester) === semester;
+}
+
+function averageScoreDetails(details: StudentScoreDetail[]) {
+  const values = details
+    .map((item) => item.score)
+    .filter((score): score is number => typeof score === "number" && Number.isFinite(score));
+  return values.length ? Math.round(values.reduce((sum, score) => sum + score, 0) / values.length) : 0;
+}
+
 export default function RekapSemesterTab({ db, sessionToken, onSelectStudent }: RekapSemesterTabProps) {
-  const [semester, setSemester] = useState<"Ganjil" | "Genap">(() => normalizeSemester(db.schoolSettings?.semester));
+  const [semester, setSemester] = useState<"Ganjil" | "Genap">(() => defaultReportSemester(db));
   const [mode, setMode] = useState<"student" | "class">("student");
   const [classReports, setClassReports] = useState<ClassReportItem[]>([]);
   const [loadingClass, setLoadingClass] = useState(false);
   const academicYear = db.schoolSettings?.academicYear || "2025/2026";
+  const reportLogoUrl = db.schoolSettings?.logoUrl || "";
   const semesterMonths = SEMESTER_MONTHS[semester];
   const attendanceData = summarizeAttendance(db.attendance, semester);
   const semesterAttendance = attendanceData.rows;
   const behaviour = db.behaviour.filter((item) => isBehaviourInSemester(item, semester));
-  const studentAverageScore = averageScore(db.scores);
-  const belowKkm = db.scores.filter((item) => item.rataRata < item.kkm);
+  const semesterScoreDetails = (db.scoreDetails || []).filter((item) => isScoreDetailInSemester(item, semester));
+  const subjectAverages = useMemo(() => {
+    const bySubject = new Map<string, StudentScoreDetail[]>();
+    semesterScoreDetails.forEach((item) => bySubject.set(item.subject, [...(bySubject.get(item.subject) || []), item]));
+    return Array.from(bySubject.entries()).map(([subject, items]) => {
+      const kkm = db.scores.find((score) => score.subject === subject)?.kkm || 70;
+      const average = averageScoreDetails(items);
+      return { subject, kkm, average, total: items.length, filled: items.filter((item) => item.score !== null && item.score !== undefined).length };
+    });
+  }, [db.scores, semesterScoreDetails]);
+  const studentAverageScore = subjectAverages.length ? Math.round(subjectAverages.reduce((sum, item) => sum + item.average, 0) / subjectAverages.length) : averageScore(db.scores);
+  const belowKkm = subjectAverages.length ? subjectAverages.filter((item) => item.average < item.kkm) : db.scores.filter((item) => item.rataRata < item.kkm);
   const attendanceSummary = attendanceData;
   const totalAttendance = attendanceData.totalDays;
   const attendancePercent = attendanceData.percent;
+
+  useEffect(() => {
+    setSemester(defaultReportSemester(db));
+  }, [db.student.id, db.scoreDetails, db.schoolSettings?.semester]);
 
   const loadClassReports = async () => {
     setLoadingClass(true);
@@ -153,27 +221,42 @@ export default function RekapSemesterTab({ db, sessionToken, onSelectStudent }: 
         </div>
       </div>
 
-      <section className="semester-print-area bg-white border border-slate-100 rounded-2xl p-6 shadow-sm space-y-6">
-        <div className="flex items-start justify-between gap-4 border-b border-slate-200 pb-5">
-          <div className="flex items-center gap-4">
-            {db.schoolSettings?.logoUrl ? (
-              <img src={db.schoolSettings.logoUrl} alt="Logo sekolah" className="w-16 h-16 object-contain rounded-xl border border-slate-100" />
-            ) : (
-              <div className="w-16 h-16 rounded-xl bg-emerald-50 border border-emerald-100 flex items-center justify-center text-emerald-700 font-black">SK</div>
-            )}
-            <div>
-              <h1 className="text-lg font-black text-slate-900">{db.schoolSettings?.name || "SIKOWALI"}</h1>
-              <p className="text-xs font-semibold text-slate-500">{db.schoolSettings?.address || "Alamat sekolah belum diisi"}</p>
-              <p className="text-xs font-semibold text-slate-500">{db.schoolSettings?.phone || "-"} • {db.schoolSettings?.email || "-"}</p>
+      <section className="semester-print-area relative overflow-hidden bg-white border border-slate-100 rounded-2xl p-6 shadow-sm space-y-5">
+        {reportLogoUrl && (
+          <img
+            src={reportLogoUrl}
+            alt=""
+            aria-hidden="true"
+            className="pointer-events-none absolute left-1/2 top-[56%] z-0 w-[360px] max-w-[70%] -translate-x-1/2 -translate-y-1/2 object-contain opacity-[0.045]"
+          />
+        )}
+        <div className="relative z-10 border-b-4 border-double border-slate-900 pb-4">
+          <div className="grid grid-cols-[128px_1fr_128px] gap-4 items-center">
+            <div className="flex flex-col items-center">
+              {reportLogoUrl ? (
+                <img src={reportLogoUrl} alt="Logo sekolah" className="w-28 h-28 object-contain" />
+              ) : (
+                <div className="w-28 h-28 rounded-xl bg-emerald-50 border border-emerald-100 flex items-center justify-center text-emerald-700 font-black text-2xl">SK</div>
+              )}
             </div>
+            <div className="text-center">
+              <h1 className="text-xl font-black uppercase text-slate-950 leading-tight">{db.schoolSettings?.name || "SIKOWALI"}</h1>
+              <p className="text-[11px] font-semibold text-slate-600">{db.schoolSettings?.status || "-"} {db.schoolSettings?.npsn ? `• NPSN ${db.schoolSettings.npsn}` : ""}</p>
+              <p className="text-[11px] font-semibold text-slate-600">{db.schoolSettings?.address || "Alamat sekolah belum diisi"}</p>
+              <p className="text-[11px] font-semibold text-slate-600">
+                {[db.schoolSettings?.city, db.schoolSettings?.province].filter(Boolean).join(", ") || "-"}
+                {" "}• Telp: {db.schoolSettings?.phone || "-"} • Email: {db.schoolSettings?.email || "-"}
+              </p>
+            </div>
+            <div />
           </div>
-          <div className="text-right">
-            <p className="text-[10px] uppercase tracking-widest font-black text-slate-400">Backup Rekap Semester {mode === "class" ? "Kelas" : "Siswa"}</p>
-            <p className="text-sm font-black text-slate-900">Semester {semester}</p>
-            <p className="text-xs font-bold text-slate-500">Tahun Ajaran {academicYear}</p>
+          <div className="text-center mt-4">
+            <h2 className="text-base font-black uppercase tracking-wide text-slate-950">Laporan Rekap Semester {mode === "class" ? "Kelas" : "Siswa"}</h2>
+            <p className="text-xs font-bold text-slate-600">Semester {semester} • Tahun Ajaran {academicYear}</p>
           </div>
         </div>
 
+        <div className="relative z-10">
         {mode === "class" ? (
           <ClassReportView
             db={db}
@@ -186,55 +269,127 @@ export default function RekapSemesterTab({ db, sessionToken, onSelectStudent }: 
           />
         ) : (
           <>
-        <div className="grid md:grid-cols-4 gap-3">
-          <SummaryBox icon={<UserRound className="w-4 h-4" />} label="Siswa" value={db.student.name} detail={`NIS: ${db.student.nis}`} />
-          <SummaryBox icon={<CalendarDays className="w-4 h-4" />} label="Kelas" value={db.student.className} detail={semesterMonths.join(", ")} />
-          <SummaryBox icon={<Award className="w-4 h-4" />} label="Rata-rata Nilai" value={`${studentAverageScore}`} detail={belowKkm.length ? `${belowKkm.length} mapel di bawah KKM` : "Semua mapel aman"} />
-          <SummaryBox icon={<FileText className="w-4 h-4" />} label="Kehadiran" value={`${attendancePercent}%`} detail={`${attendanceSummary.hadir}/${totalAttendance || 0} hari hadir`} />
+        <div className="grid md:grid-cols-[1.25fr_1fr] gap-4 pdf-section">
+          <div className="border border-slate-200 rounded-xl overflow-hidden">
+            <div className="bg-slate-50 border-b border-slate-200 px-4 py-2">
+              <p className="text-[10px] font-black uppercase tracking-widest text-slate-500">Profil Siswa</p>
+            </div>
+            <div className="p-4 grid grid-cols-[88px_1fr] gap-x-4 gap-y-2 text-xs">
+              <span className="font-black text-slate-500 uppercase tracking-wide">Nama</span>
+              <span className="font-black text-slate-950">{db.student.name}</span>
+              <span className="font-black text-slate-500 uppercase tracking-wide">Kelas</span>
+              <span className="font-bold text-slate-800">{db.student.className}</span>
+              <span className="font-black text-slate-500 uppercase tracking-wide">NIS/NISN</span>
+              <span className="font-bold text-slate-800">{db.student.nis} / {db.student.nisn || "-"}</span>
+              <span className="font-black text-slate-500 uppercase tracking-wide">Periode</span>
+              <span className="font-bold text-slate-800">Semester {semester} • {academicYear}</span>
+            </div>
+          </div>
+          <div className="border border-slate-200 rounded-xl overflow-hidden">
+            <div className="bg-slate-50 border-b border-slate-200 px-4 py-2">
+              <p className="text-[10px] font-black uppercase tracking-widest text-slate-500">Capaian Semester</p>
+            </div>
+            <div className="grid grid-cols-2 divide-x divide-slate-200">
+              <div className="p-4 text-center">
+                <p className="text-[10px] font-black uppercase tracking-widest text-slate-400">Rata-rata Nilai</p>
+                <p className="text-2xl font-black text-slate-950 mt-1">{studentAverageScore}</p>
+                <p className="text-[10px] font-bold text-slate-500 mt-1">{belowKkm.length ? `${belowKkm.length} mapel perlu pendampingan` : "Semua mapel tuntas"}</p>
+              </div>
+              <div className="p-4 text-center">
+                <p className="text-[10px] font-black uppercase tracking-widest text-slate-400">Kehadiran</p>
+                <p className="text-2xl font-black text-emerald-700 mt-1">{attendancePercent}%</p>
+                <p className="text-[10px] font-bold text-slate-500 mt-1">{attendanceSummary.hadir}/{totalAttendance || 0} hari hadir</p>
+              </div>
+            </div>
+          </div>
         </div>
 
-        <div className="space-y-3">
-          <h2 className="text-sm font-black text-slate-900">Rekap Nilai Mata Pelajaran</h2>
+        <div className="space-y-3 pdf-section">
+          <h2 className="text-sm font-black text-slate-900">Identitas Siswa</h2>
+          <Table>
+            <tbody>
+              <tr>
+                <Td strong>Nama</Td>
+                <Td>{db.student.name}</Td>
+                <Td strong>NIS / NISN</Td>
+                <Td>{db.student.nis} / {db.student.nisn || "-"}</Td>
+              </tr>
+              <tr>
+                <Td strong>Kelas</Td>
+                <Td>{db.student.className}</Td>
+                <Td strong>Jenis Kelamin</Td>
+                <Td>{db.student.gender || "-"}</Td>
+              </tr>
+              <tr>
+                <Td strong>Orang Tua</Td>
+                <Td>{db.student.parentName || db.student.fatherName || db.student.motherName || "-"}</Td>
+                <Td strong>Alamat</Td>
+                <Td>{db.student.address || db.student.parentAddressStreet || "-"}</Td>
+              </tr>
+              <tr>
+                <Td strong>Tempat/Tanggal Lahir</Td>
+                <Td>{db.student.birthPlace || "-"} / {db.student.birthDate || "-"}</Td>
+                <Td strong>Agama</Td>
+                <Td>{db.student.religion || "-"}</Td>
+              </tr>
+              <tr>
+                <Td strong>Sekolah Asal</Td>
+                <Td>{db.student.previousSchool || "-"}</Td>
+                <Td strong>Wilayah</Td>
+                <Td>{[db.student.district, db.student.city, db.student.province].filter(Boolean).join(", ") || "-"}</Td>
+              </tr>
+              <tr>
+                <Td strong>Ayah</Td>
+                <Td>{db.student.fatherName || "-"} {db.student.fatherJob ? `(${db.student.fatherJob})` : ""}</Td>
+                <Td strong>Ibu</Td>
+                <Td>{db.student.motherName || "-"} {db.student.motherJob ? `(${db.student.motherJob})` : ""}</Td>
+              </tr>
+              <tr>
+                <Td strong>Alamat Orang Tua</Td>
+                <Td colSpan={3}>{[db.student.parentAddressStreet, db.student.parentAddressVillage].filter(Boolean).join(", ") || "-"}</Td>
+              </tr>
+            </tbody>
+          </Table>
+        </div>
+
+        <div className="space-y-3 pdf-section">
+          <h2 className="text-sm font-black text-slate-900">Ringkasan Nilai Mata Pelajaran</h2>
           <Table>
             <thead>
               <tr>
                 <Th>Mata Pelajaran</Th>
                 <Th align="center">KKM</Th>
-                <Th align="center">Tugas</Th>
-                <Th align="center">UH 1</Th>
-                <Th align="center">UH 2</Th>
-                <Th align="center">UTS</Th>
-                <Th align="center">UAS</Th>
+                <Th align="center">Komponen</Th>
+                <Th align="center">Terisi</Th>
                 <Th align="center">Rata-rata</Th>
                 <Th>Status</Th>
               </tr>
             </thead>
             <tbody>
-              {db.scores.map((score) => (
-                <tr key={score.subject}>
-                  <Td strong>{score.subject}</Td>
-                  <Td align="center">{score.kkm}</Td>
-                  <Td align="center">{score.tugas}</Td>
-                  <Td align="center">{score.uh1}</Td>
-                  <Td align="center">{score.uh2}</Td>
-                  <Td align="center">{score.uts}</Td>
-                  <Td align="center">{score.uas}</Td>
-                  <Td align="center" strong>{score.rataRata}</Td>
-                  <Td>{score.rataRata < score.kkm ? "Perlu Pendampingan" : "Tuntas"}</Td>
+              {subjectAverages.length ? subjectAverages.map((item) => (
+                <tr key={item.subject}>
+                  <Td strong>{item.subject}</Td>
+                  <Td align="center">{item.kkm}</Td>
+                  <Td align="center">{item.total}</Td>
+                  <Td align="center">{item.filled}</Td>
+                  <Td align="center" strong>{item.average}</Td>
+                  <Td>{item.average < item.kkm ? "Perlu Pendampingan" : "Tuntas"}</Td>
                 </tr>
-              ))}
+              )) : (
+                <tr><Td colSpan={6}>Belum ada data nilai detail pada semester ini.</Td></tr>
+              )}
             </tbody>
           </Table>
         </div>
 
-        <div className="space-y-3">
+        <div className="space-y-3 pdf-section">
           <h2 className="text-sm font-black text-slate-900">Rekap Absensi Semester</h2>
-          <div className="grid grid-cols-2 md:grid-cols-5 gap-3">
-            <MiniStat label="Hadir" value={`${attendanceSummary.hadir} hari`} />
-            <MiniStat label="Sakit" value={`${attendanceSummary.sakit} hari`} />
-            <MiniStat label="Izin" value={`${attendanceSummary.izin} hari`} />
-            <MiniStat label="Alpha" value={`${attendanceSummary.alpha} hari`} />
-            <MiniStat label="Persentase" value={`${attendancePercent}%`} />
+          <div className="grid grid-cols-5 border border-slate-200 rounded-xl overflow-hidden">
+            <AttendanceStat label="Hadir" value={attendanceSummary.hadir} tone="emerald" />
+            <AttendanceStat label="Sakit" value={attendanceSummary.sakit} tone="amber" />
+            <AttendanceStat label="Izin" value={attendanceSummary.izin} tone="sky" />
+            <AttendanceStat label="Alpha" value={attendanceSummary.alpha} tone="rose" />
+            <AttendanceStat label="Kehadiran" value={`${attendancePercent}%`} tone="slate" />
           </div>
           <Table>
             <thead>
@@ -264,7 +419,7 @@ export default function RekapSemesterTab({ db, sessionToken, onSelectStudent }: 
           </Table>
         </div>
 
-        <div className="space-y-3">
+        <div className="space-y-3 pdf-section">
           <h2 className="text-sm font-black text-slate-900">Catatan Perilaku & Prestasi</h2>
           <Table>
             <thead>
@@ -292,7 +447,7 @@ export default function RekapSemesterTab({ db, sessionToken, onSelectStudent }: 
           </Table>
         </div>
 
-        <div className="grid md:grid-cols-2 gap-4 pt-2">
+        <div className="grid md:grid-cols-2 gap-4 pt-2 break-inside-avoid pdf-signature">
           <div className="border border-slate-200 rounded-xl p-4">
             <p className="text-[10px] font-black uppercase tracking-widest text-slate-400">Kesimpulan Wali Kelas</p>
             <p className="text-xs leading-relaxed text-slate-700 mt-2">{conclusion}</p>
@@ -313,6 +468,7 @@ export default function RekapSemesterTab({ db, sessionToken, onSelectStudent }: 
         </div>
           </>
         )}
+        </div>
 
         <button onClick={printPdf} className="print:hidden fixed bottom-6 right-6 inline-flex items-center gap-2 bg-slate-900 text-white px-4 py-3 rounded-xl text-xs font-black shadow-lg hover:bg-slate-800">
           <Printer className="w-4 h-4" />
@@ -393,11 +549,18 @@ function SummaryBox({ icon, label, value, detail }: { icon: React.ReactNode; lab
   );
 }
 
-function MiniStat({ label, value }: { label: string; value: string }) {
+function AttendanceStat({ label, value, tone }: { label: string; value: string | number; tone: "emerald" | "amber" | "sky" | "rose" | "slate" }) {
+  const toneClass = {
+    emerald: "text-emerald-700 bg-emerald-50",
+    amber: "text-amber-700 bg-amber-50",
+    sky: "text-sky-700 bg-sky-50",
+    rose: "text-rose-700 bg-rose-50",
+    slate: "text-slate-800 bg-slate-50",
+  }[tone];
   return (
-    <div className="border border-slate-200 bg-slate-50 rounded-xl p-3">
-      <p className="text-[10px] font-black uppercase tracking-widest text-slate-400">{label}</p>
-      <p className="text-sm font-black text-slate-900 mt-1">{value}</p>
+    <div className={`p-2.5 text-center border-r border-slate-200 last:border-r-0 ${toneClass}`}>
+      <p className="text-[9px] font-black uppercase tracking-widest opacity-75">{label}</p>
+      <p className="text-base font-black mt-1">{value}</p>
     </div>
   );
 }

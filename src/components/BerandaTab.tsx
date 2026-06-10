@@ -1,6 +1,6 @@
 import React from "react";
 import { Sparkles, TrendingDown, BookOpen, AlertCircle, Calendar, ArrowRight } from "lucide-react";
-import { SIKOWALIDatabase, Role } from "../types";
+import { SIKOWALIDatabase, Role, StudentScoreDetail } from "../types";
 
 interface BerandaTabProps {
   db: SIKOWALIDatabase;
@@ -8,15 +8,36 @@ interface BerandaTabProps {
   role: Role;
 }
 
+function buildScoreOverview(db: SIKOWALIDatabase) {
+  const details = db.scoreDetails || [];
+  if (!details.length) {
+    return db.scores.map((score) => ({ subject: score.subject, rataRata: score.rataRata, kkm: score.kkm }));
+  }
+  const bySubject = new Map<string, StudentScoreDetail[]>();
+  details.forEach((detail) => bySubject.set(detail.subject, [...(bySubject.get(detail.subject) || []), detail]));
+  return Array.from(bySubject.entries()).map(([subject, subjectDetails]) => {
+    const values = subjectDetails
+      .map((detail) => detail.score)
+      .filter((score): score is number => typeof score === "number" && Number.isFinite(score));
+    const fallback = db.scores.find((score) => score.subject === subject);
+    return {
+      subject,
+      rataRata: values.length ? Math.round(values.reduce((sum, score) => sum + score, 0) / values.length) : 0,
+      kkm: fallback?.kkm || 70,
+    };
+  });
+}
+
 export default function BerandaTab({ db, setTab, role }: BerandaTabProps) {
   // Compute key states dynamically so edits reflect immediately
-  const { student, scores, attendance } = db;
+  const { student, attendance } = db;
   const user = db.currentUser;
   const parentName = user?.name || student.parentName || "Orang Tua";
 
   // Overall academic averages
-  const avgScore = scores.length > 0
-    ? parseFloat((scores.reduce((acc, curr) => acc + curr.rataRata, 0) / scores.length).toFixed(1))
+  const scoreOverview = buildScoreOverview(db);
+  const avgScore = scoreOverview.length > 0
+    ? parseFloat((scoreOverview.reduce((acc, curr) => acc + curr.rataRata, 0) / scoreOverview.length).toFixed(1))
     : 0;
 
   // Weighted attendance
@@ -25,7 +46,7 @@ export default function BerandaTab({ db, setTab, role }: BerandaTabProps) {
   const attendancePercentage = totalDays > 0 ? Math.round((totalHadir / totalDays) * 100) : 0;
 
   // Subjects needing attention (score below average/KKM)
-  const alertSubjects = scores.filter(s => s.rataRata < s.kkm);
+  const alertSubjects = scoreOverview.filter(s => s.rataRata < s.kkm);
 
   const scopedStudents = db.visibleStudents || [student];
   const unreadCount = (db.notifications || []).filter((item) => !item.isRead).length;
@@ -125,7 +146,7 @@ export default function BerandaTab({ db, setTab, role }: BerandaTabProps) {
         </div>
       </div>
 
-      { (role === "Admin" || role === "Administrator" || role === "Guru" || role === "kepalasekolah") && (
+      { (role === "Admin" || role === "Administrator" || role === "WaliKelas" || role === "Guru" || role === "kepalasekolah") && (
         <div className="portal-soft-card rounded-2xl p-5">
           <h3 className="text-lg font-bold text-slate-900 mb-3">Daftar Murid</h3>
           <ul className="list-disc list-inside space-y-1 text-slate-800">
@@ -147,7 +168,7 @@ export default function BerandaTab({ db, setTab, role }: BerandaTabProps) {
             </button>
           </div>
           <div className="space-y-3.5">
-            {scores.map((s) => {
+            {scoreOverview.map((s) => {
               const isLow = s.rataRata < s.kkm;
               return (
                 <div key={s.subject} className="space-y-1">

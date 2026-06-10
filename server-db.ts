@@ -18,6 +18,7 @@ import {
   SchoolSettings,
   SIKOWALIDatabase,
   Student,
+  StudentScoreDetail,
   Teacher,
   SubjectScore,
   User,
@@ -26,6 +27,7 @@ import {
 let DB_NAME = "SIKOWALI";
 const PASSWORD_HASH_PREFIX = "pbkdf2";
 const PASSWORD_ITERATIONS = 310000;
+const DEFAULT_SEED_PASSWORD = process.env.SEED_DEFAULT_PASSWORD || randomBytes(18).toString("base64url");
 
 let pool: mysql.Pool | null = null;
 let isDbActive = false;
@@ -61,20 +63,20 @@ function verifyPassword(password: string, stored: string) {
 }
 
 const DEFAULT_CLASSES: ClassRoom[] = [
-  { id: "c_vii_a", name: "Kelas VII-A", homeroomTeacherId: "u_guru" },
-  { id: "c_vii_b", name: "Kelas VII-B", homeroomTeacherId: "u_guru2" },
+  { id: "c_vii_a", name: "Kelas VII-A", homeroomTeacherId: "u_guru", academicYear: "2025/2026", semester: "Genap" },
+  { id: "c_vii_b", name: "Kelas VII-B", homeroomTeacherId: "u_guru2", academicYear: "2025/2026", semester: "Genap" },
 ];
 
 const DEFAULT_USERS: User[] = [
-  { id: "u_administrator", username: "administrator", password: "password123", role: "Administrator", name: "Administrator SIKOWALI" },
-  { id: "u_admin", username: "admin", password: "password123", role: "Admin", name: "Admin SIKOWALI" },
-  { id: "u_kepala", username: "kepala", password: "password123", role: "kepalasekolah", name: "Drs. Kepala Sekolah" },
-  { id: "u_guru", username: "guru", password: "password123", role: "Guru", name: "Ibu Safitri, M.Pd" },
-  { id: "u_guru2", username: "guru2", password: "password123", role: "Guru", name: "Pak Wahyu, S.Pd" },
-  { id: "u_ortu", username: "ortu", password: "ortu123", role: "orangtua", name: "Budi Santoso" },
-  { id: "u_ortu2", username: "ortu2", password: "ortu123", role: "orangtua", name: "Sri Wahyuni" },
-  { id: "u_murid", username: "murid", password: "password123", role: "Murid", name: "Ahmad Budi Santoso" },
-  { id: "u_murid2", username: "murid2", password: "password123", role: "Murid", name: "Nadia Putri Lestari" },
+  { id: "u_administrator", username: "administrator", password: DEFAULT_SEED_PASSWORD, role: "Administrator", name: "Administrator SIKOWALI" },
+  { id: "u_admin", username: "admin", password: DEFAULT_SEED_PASSWORD, role: "Admin", name: "Admin SIKOWALI" },
+  { id: "u_kepala", username: "kepala", password: DEFAULT_SEED_PASSWORD, role: "kepalasekolah", name: "Drs. Kepala Sekolah" },
+  { id: "u_guru", username: "guru", password: DEFAULT_SEED_PASSWORD, role: "WaliKelas", name: "Ibu Safitri, M.Pd" },
+  { id: "u_guru2", username: "guru2", password: DEFAULT_SEED_PASSWORD, role: "WaliKelas", name: "Pak Wahyu, S.Pd" },
+  { id: "u_ortu", username: "ortu", password: DEFAULT_SEED_PASSWORD, role: "orangtua", name: "Budi Santoso" },
+  { id: "u_ortu2", username: "ortu2", password: DEFAULT_SEED_PASSWORD, role: "orangtua", name: "Sri Wahyuni" },
+  { id: "u_murid", username: "murid", password: DEFAULT_SEED_PASSWORD, role: "Murid", name: "Ahmad Budi Santoso" },
+  { id: "u_murid2", username: "murid2", password: DEFAULT_SEED_PASSWORD, role: "Murid", name: "Nadia Putri Lestari" },
 ];
 
 const DEFAULT_STUDENTS: Student[] = [
@@ -169,7 +171,7 @@ const ACCESS_FEATURES = [
   { id: "kredensial_admin", feature: "Ubah Kredensial Admin", category: "Akun" },
 ];
 
-const ALL_ROLES: Role[] = ["Administrator", "Admin", "Guru", "kepalasekolah", "orangtua", "Murid"];
+const ALL_ROLES: Role[] = ["Administrator", "Admin", "WaliKelas", "Guru", "kepalasekolah", "orangtua", "Murid"];
 
 function defaultCrud(featureId: string, role: Role): CrudPermission {
   const none = { create: false, read: false, update: false, delete: false };
@@ -184,11 +186,11 @@ function defaultCrud(featureId: string, role: Role): CrudPermission {
     if (["manajemen", "tambah_user", "tambah_guru", "tambah_murid", "data_sekolah", "parenting", "backup_chatbot"].includes(featureId)) return crud;
     return read;
   }
-  if (role === "Guru") {
+  if (role === "WaliKelas") {
     if (["manajemen", "tambah_murid", "input_nilai", "input_absensi", "rekap_semester", "karya", "pengumuman", "parenting", "backup_chatbot"].includes(featureId)) return crud;
     if (["beranda", "rapor", "absensi", "catatan", "ai_komunikasi", "profil"].includes(featureId)) return read;
   }
-  if (role === "kepalasekolah") {
+  if (role === "Guru" || role === "kepalasekolah") {
     if (featureId === "parenting") return crud;
     if (["beranda", "rapor", "absensi", "catatan", "karya", "ai_komunikasi", "profil"].includes(featureId)) return read;
   }
@@ -250,13 +252,37 @@ function dbConfig() {
   };
 }
 
+function validateProductionDatabaseConfig() {
+  if (process.env.NODE_ENV !== "production") return;
+  const user = process.env.DB_USER || "";
+  const password = process.env.DB_PASSWORD || "";
+  const appUrl = process.env.APP_URL || "";
+  const database = process.env.DB_DATABASE || "";
+  const insecureProblems = [
+    !user && "DB_USER wajib diisi di production.",
+    user === "root" && "DB_USER production tidak boleh memakai root.",
+    !password && "DB_PASSWORD wajib diisi di production.",
+    password === "bebexterbang" && "DB_PASSWORD production masih memakai password lokal lama.",
+    !database && "DB_DATABASE wajib diisi di production.",
+    !appUrl && "APP_URL wajib diisi di production untuk proteksi origin/CSRF.",
+    appUrl.startsWith("http://localhost") && "APP_URL production tidak boleh memakai localhost.",
+  ].filter(Boolean);
+
+  if (insecureProblems.length) {
+    throw new Error(`Konfigurasi production belum aman: ${insecureProblems.join(" ")}`);
+  }
+}
+
 export async function initializeDatabase() {
   try {
+    validateProductionDatabaseConfig();
     DB_NAME = process.env.DB_DATABASE || "SIKOWALI";
     const base = dbConfig();
-    const bootstrap = await mysql.createConnection(base);
-    await bootstrap.query(`CREATE DATABASE IF NOT EXISTS \`${DB_NAME}\` CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci`);
-    await bootstrap.end();
+    if (process.env.NODE_ENV !== "production") {
+      const bootstrap = await mysql.createConnection(base);
+      await bootstrap.query(`CREATE DATABASE IF NOT EXISTS \`${DB_NAME}\` CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci`);
+      await bootstrap.end();
+    }
 
     pool = mysql.createPool({ ...base, database: DB_NAME });
     await pool.query("SELECT 1");
@@ -264,6 +290,9 @@ export async function initializeDatabase() {
     await setupSchema();
     console.log(`Connected to MySQL/MariaDB database ${DB_NAME}.`);
   } catch (err: any) {
+    if (process.env.NODE_ENV === "production") {
+      throw err;
+    }
     console.error("Failed to connect MySQL/MariaDB. Falling back to memory mode.", err?.message || err);
     pool = null;
     isDbActive = false;
@@ -277,7 +306,7 @@ async function setupSchema() {
       id VARCHAR(50) PRIMARY KEY,
       username VARCHAR(100) UNIQUE NOT NULL,
       password VARCHAR(255) NOT NULL,
-      role ENUM('orangtua','Guru','kepalasekolah','Admin','Administrator','Murid') NOT NULL,
+      role ENUM('orangtua','WaliKelas','Guru','kepalasekolah','Admin','Administrator','Murid') NOT NULL,
       name VARCHAR(150) NOT NULL,
       email VARCHAR(150) NULL,
       phone VARCHAR(50) NULL,
@@ -311,10 +340,14 @@ async function setupSchema() {
     CREATE TABLE IF NOT EXISTS classes (
       id VARCHAR(50) PRIMARY KEY,
       name VARCHAR(80) UNIQUE NOT NULL,
+      academic_year VARCHAR(30) NULL,
+      semester VARCHAR(30) NULL,
       homeroom_teacher_id VARCHAR(50) NULL,
       FOREIGN KEY (homeroom_teacher_id) REFERENCES users(id) ON DELETE SET NULL
     ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
   `);
+  await ensureColumn("classes", "academic_year", "VARCHAR(30) NULL");
+  await ensureColumn("classes", "semester", "VARCHAR(30) NULL");
   await pool.query(`
     CREATE TABLE IF NOT EXISTS students (
       id VARCHAR(50) PRIMARY KEY,
@@ -330,6 +363,22 @@ async function setupSchema() {
   `);
   await ensureColumn("students", "parent_name", "VARCHAR(150) NULL");
   await ensureColumn("students", "enabled", "BOOLEAN DEFAULT TRUE");
+  await ensureColumn("students", "nisn", "VARCHAR(50) NULL");
+  await ensureColumn("students", "gender", "VARCHAR(30) NULL");
+  await ensureColumn("students", "birth_place", "VARCHAR(150) NULL");
+  await ensureColumn("students", "birth_date", "VARCHAR(80) NULL");
+  await ensureColumn("students", "religion", "VARCHAR(80) NULL");
+  await ensureColumn("students", "previous_school", "VARCHAR(150) NULL");
+  await ensureColumn("students", "address", "TEXT NULL");
+  await ensureColumn("students", "district", "VARCHAR(120) NULL");
+  await ensureColumn("students", "city", "VARCHAR(120) NULL");
+  await ensureColumn("students", "province", "VARCHAR(120) NULL");
+  await ensureColumn("students", "father_name", "VARCHAR(150) NULL");
+  await ensureColumn("students", "mother_name", "VARCHAR(150) NULL");
+  await ensureColumn("students", "father_job", "VARCHAR(120) NULL");
+  await ensureColumn("students", "mother_job", "VARCHAR(120) NULL");
+  await ensureColumn("students", "parent_address_street", "TEXT NULL");
+  await ensureColumn("students", "parent_address_village", "VARCHAR(150) NULL");
   await pool.query(`
     CREATE TABLE IF NOT EXISTS teachers (
       id VARCHAR(50) PRIMARY KEY,
@@ -400,6 +449,8 @@ async function setupSchema() {
       id INT AUTO_INCREMENT PRIMARY KEY,
       student_id VARCHAR(50) NOT NULL,
       subject VARCHAR(100) NOT NULL,
+      academic_year VARCHAR(30) NULL,
+      semester VARCHAR(30) NULL,
       kkm INT DEFAULT 75,
       tugas INT DEFAULT 0,
       uh1 INT DEFAULT 0,
@@ -407,7 +458,35 @@ async function setupSchema() {
       uts INT DEFAULT 0,
       uas INT DEFAULT 0,
       rata_rata INT DEFAULT 0,
-      UNIQUE KEY uniq_student_subject (student_id, subject),
+      UNIQUE KEY uniq_student_subject_period (student_id, subject, academic_year, semester),
+      FOREIGN KEY (student_id) REFERENCES students(id) ON DELETE CASCADE
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
+  `);
+  await ensureColumn("student_scores", "academic_year", "VARCHAR(30) NULL");
+  await ensureColumn("student_scores", "semester", "VARCHAR(30) NULL");
+  await pool.query(
+    "UPDATE student_scores SET academic_year = COALESCE(NULLIF(academic_year, ''), ?), semester = COALESCE(NULLIF(semester, ''), ?) WHERE academic_year IS NULL OR academic_year = '' OR semester IS NULL OR semester = ''",
+    [DEFAULT_SCHOOL_SETTINGS.academicYear || "2025/2026", DEFAULT_SCHOOL_SETTINGS.semester || "Genap"]
+  ).catch(() => undefined);
+  await pool.query("ALTER TABLE student_scores DROP INDEX uniq_student_subject").catch(() => undefined);
+  await pool.query("ALTER TABLE student_scores ADD UNIQUE KEY uniq_student_subject_period (student_id, subject, academic_year, semester)").catch(() => undefined);
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS student_score_details (
+      id INT AUTO_INCREMENT PRIMARY KEY,
+      student_id VARCHAR(50) NOT NULL,
+      subject VARCHAR(100) NOT NULL,
+      academic_year VARCHAR(30) NOT NULL,
+      semester VARCHAR(30) NOT NULL,
+      assessment_type VARCHAR(80) NOT NULL,
+      scope_label VARCHAR(100) NOT NULL,
+      objective_label VARCHAR(80) NOT NULL,
+      score DECIMAL(6,2) NULL,
+      note TEXT NULL,
+      source_file VARCHAR(255) NULL,
+      created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+      updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+      UNIQUE KEY uniq_student_score_detail (student_id, subject, academic_year, semester, assessment_type, scope_label, objective_label),
+      INDEX idx_score_detail_subject_year (subject, academic_year, semester),
       FOREIGN KEY (student_id) REFERENCES students(id) ON DELETE CASCADE
     ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
   `);
@@ -579,33 +658,46 @@ async function ensureColumn(table: string, column: string, definition: string) {
 async function migrateRoleEnum() {
   if (!pool) return;
   await pool.query("ALTER TABLE users MODIFY role VARCHAR(50) NOT NULL").catch(() => undefined);
+  await pool.query("ALTER TABLE users MODIFY role ENUM('orangtua','WaliKelas','Guru','kepalasekolah','Admin','Administrator','Murid') NOT NULL");
   await pool.query("UPDATE users SET role = 'orangtua' WHERE role IN ('Orang Tua', 'ortu')");
   await pool.query("UPDATE users SET role = 'kepalasekolah' WHERE role IN ('Kepala Sekolah', 'kepsek')");
-  await pool.query("ALTER TABLE users MODIFY role ENUM('orangtua','Guru','kepalasekolah','Admin','Administrator','Murid') NOT NULL");
+  await pool.query("UPDATE users SET role = 'WaliKelas' WHERE role = 'Guru' AND id IN (SELECT homeroom_teacher_id FROM classes WHERE homeroom_teacher_id IS NOT NULL)");
 }
 
 async function seedIfEmpty() {
   if (!pool) return;
   const [[userCount]] = await pool.query<any[]>("SELECT COUNT(*) AS count FROM users");
+  if (process.env.NODE_ENV === "production" && Number(userCount.count) === 0) {
+    throw new Error("Database production belum memiliki user. Buat akun Administrator secara aman sebelum menjalankan aplikasi.");
+  }
   if (Number(userCount.count) === 0) {
     for (const u of DEFAULT_USERS) {
       await pool.query("INSERT INTO users (id, username, password, role, name) VALUES (?, ?, ?, ?, ?)", [u.id, u.username, hashPassword(u.password || ""), u.role, u.name || u.username]);
     }
   }
-  const administrator = DEFAULT_USERS[0];
-  await pool.query(
-    "INSERT IGNORE INTO users (id, username, password, role, name) VALUES (?, ?, ?, ?, ?)",
-    [administrator.id, administrator.username, hashPassword(administrator.password || ""), administrator.role, administrator.name || administrator.username]
-  );
+  if (process.env.NODE_ENV !== "production") {
+    const administrator = DEFAULT_USERS[0];
+    await pool.query(
+      "INSERT IGNORE INTO users (id, username, password, role, name) VALUES (?, ?, ?, ?, ?)",
+      [administrator.id, administrator.username, hashPassword(administrator.password || ""), administrator.role, administrator.name || administrator.username]
+    );
+  }
+  await pool.query("ALTER TABLE users MODIFY role ENUM('orangtua','WaliKelas','Guru','kepalasekolah','Admin','Administrator','Murid') NOT NULL").catch(() => undefined);
   await pool.query("UPDATE users SET role = 'orangtua' WHERE role IN ('Orang Tua', 'ortu')").catch(() => undefined);
   await pool.query("UPDATE users SET role = 'kepalasekolah' WHERE role IN ('Kepala Sekolah', 'kepsek')").catch(() => undefined);
+  await pool.query("UPDATE users SET role = 'WaliKelas' WHERE role = 'Guru' AND id IN (SELECT homeroom_teacher_id FROM classes WHERE homeroom_teacher_id IS NOT NULL)").catch(() => undefined);
 
   const [[classCount]] = await pool.query<any[]>("SELECT COUNT(*) AS count FROM classes");
   if (Number(classCount.count) === 0) {
     for (const c of DEFAULT_CLASSES) {
-      await pool.query("INSERT INTO classes (id, name, homeroom_teacher_id) VALUES (?, ?, ?)", [c.id, c.name, c.homeroomTeacherId || null]);
+      await pool.query("INSERT INTO classes (id, name, academic_year, semester, homeroom_teacher_id) VALUES (?, ?, ?, ?, ?)", [c.id, c.name, c.academicYear || null, c.semester || null, c.homeroomTeacherId || null]);
     }
   }
+  const schoolSettingsForClassMeta = await getSchoolSettings();
+  await pool.query(
+    "UPDATE classes SET academic_year = COALESCE(NULLIF(academic_year, ''), ?), semester = COALESCE(NULLIF(semester, ''), ?) WHERE academic_year IS NULL OR academic_year = '' OR semester IS NULL OR semester = ''",
+    [schoolSettingsForClassMeta.academicYear || DEFAULT_SCHOOL_SETTINGS.academicYear || null, schoolSettingsForClassMeta.semester || DEFAULT_SCHOOL_SETTINGS.semester || null]
+  ).catch(() => undefined);
 
   const [[studentCount]] = await pool.query<any[]>("SELECT COUNT(*) AS count FROM students");
   if (Number(studentCount.count) === 0) {
@@ -745,7 +837,7 @@ async function seedIfEmpty() {
     const defaults = [
       { id: "n_ortu_1", role: "orangtua", title: "Jadwal UTS Semester 2", description: "Jadwal lengkap penilaian UTS Semester 2 resmi diposting di papan Pengumuman Sekolah.", date: "1 hari yang lalu", type: "info" },
       { id: "n_ortu_2", role: "orangtua", title: "Peringatan Disiplin Walikelas", description: "Murid tercatat terlambat memasuki kelas setelah istirahat pertama berakhir.", date: "1 hari yang lalu", type: "urgent" },
-      { id: "n_guru_1", role: "Guru", title: "Rekap Absensi Perlu Dicek", description: "Pastikan absensi bulan berjalan sudah diperbarui sebelum rapat wali kelas.", date: "Hari ini", type: "warning" },
+      { id: "n_walikelas_1", role: "WaliKelas", title: "Rekap Absensi Perlu Dicek", description: "Pastikan absensi bulan berjalan sudah diperbarui sebelum rapat wali kelas.", date: "Hari ini", type: "warning" },
       { id: "n_admin_1", role: "Admin", title: "Database Terhubung", description: "Koneksi MySQL/phpMyAdmin aktif dan siap dipakai untuk manajemen data.", date: "Hari ini", type: "info" },
     ];
     for (const n of defaults) {
@@ -754,7 +846,7 @@ async function seedIfEmpty() {
   }
   const roleNotifications = [
     { id: "n_ortu_default", role: "orangtua", title: "Portal Orang Tua Aktif", description: "Notifikasi orang tua sudah tersambung ke database sekolah.", date: "Hari ini", type: "info" },
-    { id: "n_guru_default", role: "Guru", title: "Portal Guru Aktif", description: "Notifikasi guru wali kelas sudah tersambung ke database sekolah.", date: "Hari ini", type: "info" },
+    { id: "n_walikelas_default", role: "WaliKelas", title: "Portal Wali Kelas Aktif", description: "Notifikasi wali kelas sudah tersambung ke database sekolah.", date: "Hari ini", type: "info" },
     { id: "n_murid_default", role: "Murid", title: "Portal Murid Aktif", description: "Notifikasi murid sudah tersambung ke database sekolah.", date: "Hari ini", type: "info" },
   ];
   for (const n of roleNotifications) {
@@ -785,7 +877,32 @@ function rowToUser(row: any): User {
 }
 
 function rowToStudent(row: any): Student {
-  return { id: row.id, name: row.name, className: row.class_name, nis: row.nis, parentName: row.parent_name ?? undefined, parentId: row.parent_id ?? undefined, userId: row.user_id ?? undefined, enabled: row.enabled === undefined ? true : !!row.enabled };
+  return {
+    id: row.id,
+    name: row.name,
+    className: row.class_name,
+    nis: row.nis,
+    nisn: row.nisn ?? undefined,
+    gender: row.gender ?? undefined,
+    birthPlace: row.birth_place ?? undefined,
+    birthDate: row.birth_date ?? undefined,
+    religion: row.religion ?? undefined,
+    previousSchool: row.previous_school ?? undefined,
+    address: row.address ?? undefined,
+    district: row.district ?? undefined,
+    city: row.city ?? undefined,
+    province: row.province ?? undefined,
+    fatherName: row.father_name ?? undefined,
+    motherName: row.mother_name ?? undefined,
+    fatherJob: row.father_job ?? undefined,
+    motherJob: row.mother_job ?? undefined,
+    parentAddressStreet: row.parent_address_street ?? undefined,
+    parentAddressVillage: row.parent_address_village ?? undefined,
+    parentName: row.parent_name ?? undefined,
+    parentId: row.parent_id ?? undefined,
+    userId: row.user_id ?? undefined,
+    enabled: row.enabled === undefined ? true : !!row.enabled,
+  };
 }
 
 function rowToTeacher(row: any): Teacher {
@@ -861,6 +978,22 @@ function rowToParentRegistration(row: any): ParentRegistration {
   };
 }
 
+function rowToScoreDetail(row: any): StudentScoreDetail {
+  return {
+    id: row.id,
+    studentId: row.student_id,
+    subject: row.subject,
+    academicYear: row.academic_year,
+    semester: row.semester,
+    assessmentType: row.assessment_type,
+    scopeLabel: row.scope_label,
+    objectiveLabel: row.objective_label,
+    score: row.score === null || row.score === undefined ? null : Number(row.score),
+    note: row.note ?? undefined,
+    sourceFile: row.source_file ?? undefined,
+  };
+}
+
 function rowToSchoolSettings(row: any): SchoolSettings {
   return {
     id: row.id,
@@ -909,7 +1042,7 @@ async function getVisibleStudents(user: User, selectedClassName?: string): Promi
     const students = IN_MEMORY_DB.students || DEFAULT_STUDENTS;
     if (user.role === "Murid") return students.filter((s) => s.userId === user.id);
     if (user.role === "orangtua") return students.filter((s) => s.parentId === user.id);
-    if (user.role === "Guru") return students.filter((s) => s.className === "Kelas VII-A");
+    if (user.role === "WaliKelas") return students.filter((s) => s.className === "Kelas VII-A");
     if (selectedClassName) return students.filter((s) => s.className === selectedClassName);
     return students;
   }
@@ -922,10 +1055,10 @@ async function getVisibleStudents(user: User, selectedClassName?: string): Promi
   } else if (user.role === "orangtua") {
     query += " AND parent_id = ?";
     params.push(user.id);
-  } else if (user.role === "Guru") {
+  } else if (user.role === "WaliKelas") {
     query += " AND class_name IN (SELECT name FROM classes WHERE homeroom_teacher_id = ?)";
     params.push(user.id);
-  } else if (user.role === "kepalasekolah" && selectedClassName) {
+  } else if ((user.role === "Guru" || user.role === "kepalasekolah") && selectedClassName) {
     query += " AND class_name = ?";
     params.push(selectedClassName);
   }
@@ -951,6 +1084,10 @@ export async function getPortalDatabase(userId?: string, selectedStudentId?: str
   const activeId = activeStudent?.id || "20240012";
 
   const [scoreRows] = await pool.query<any[]>("SELECT * FROM student_scores WHERE student_id = ? ORDER BY subject ASC", [activeId]);
+  const [scoreDetailRows] = await pool.query<any[]>(
+    "SELECT * FROM student_score_details WHERE student_id = ? ORDER BY subject ASC, academic_year ASC, semester ASC, assessment_type ASC, scope_label ASC, objective_label ASC",
+    [activeId]
+  );
   const [attendanceRows] = await pool.query<any[]>("SELECT * FROM student_attendance WHERE student_id = ? ORDER BY id ASC", [activeId]);
   const [attendanceDailyRows] = await pool.query<any[]>("SELECT * FROM student_attendance_daily WHERE student_id = ? ORDER BY date DESC", [activeId]);
   const [behaviourRows] = await pool.query<any[]>("SELECT * FROM behaviour WHERE student_id = ? ORDER BY date DESC", [activeId]);
@@ -982,9 +1119,10 @@ export async function getPortalDatabase(userId?: string, selectedStudentId?: str
     students: allStudents,
     visibleStudents,
     selectedClassName: selectedClassName || activeStudent?.className,
-    classes: classRows.map((c) => ({ id: c.id, name: c.name, homeroomTeacherId: c.homeroom_teacher_id ?? undefined })),
+    classes: classRows.map((c) => ({ id: c.id, name: c.name, homeroomTeacherId: c.homeroom_teacher_id ?? undefined, academicYear: c.academic_year ?? undefined, semester: c.semester ?? undefined })),
     teachers: teacherRows.map(rowToTeacher),
-    scores: scoreRows.map((s) => ({ subject: s.subject, kkm: s.kkm, tugas: s.tugas, uh1: s.uh1, uh2: s.uh2, uts: s.uts, uas: s.uas, rataRata: s.rata_rata })),
+    scores: scoreRows.map((s) => ({ subject: s.subject, academicYear: s.academic_year ?? undefined, semester: s.semester ?? undefined, kkm: s.kkm, tugas: s.tugas, uh1: s.uh1, uh2: s.uh2, uts: s.uts, uas: s.uas, rataRata: s.rata_rata })),
+    scoreDetails: scoreDetailRows.map(rowToScoreDetail),
     attendance,
     attendanceDaily,
     behaviour: behaviourRows.map((b) => ({ id: b.id, type: b.type, title: b.title, description: b.description, teacher: b.teacher, date: b.date, sourcePortal: b.source_portal || "Portal Guru" })),
@@ -1014,11 +1152,13 @@ export async function getAllStudents(): Promise<Student[]> {
 
 async function upsertScore(studentId: string, s: SubjectScore) {
   if (!pool) return;
+  const academicYear = s.academicYear || DEFAULT_SCHOOL_SETTINGS.academicYear || "2025/2026";
+  const semester = s.semester || DEFAULT_SCHOOL_SETTINGS.semester || "Genap";
   await pool.query(
-    `INSERT INTO student_scores (student_id, subject, kkm, tugas, uh1, uh2, uts, uas, rata_rata)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+    `INSERT INTO student_scores (student_id, subject, academic_year, semester, kkm, tugas, uh1, uh2, uts, uas, rata_rata)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
      ON DUPLICATE KEY UPDATE kkm=VALUES(kkm), tugas=VALUES(tugas), uh1=VALUES(uh1), uh2=VALUES(uh2), uts=VALUES(uts), uas=VALUES(uas), rata_rata=VALUES(rata_rata)`,
-    [studentId, s.subject, s.kkm, s.tugas, s.uh1, s.uh2, s.uts, s.uas, s.rataRata]
+    [studentId, s.subject, academicYear, semester, s.kkm, s.tugas, s.uh1, s.uh2, s.uts, s.uas, s.rataRata]
   );
 }
 
@@ -1039,6 +1179,83 @@ export async function saveScores(scores: SubjectScore[], studentId = "20240012")
   }
   for (const s of scores) await upsertScore(studentId, s);
   return (await getPortalDatabase("u_admin", studentId)).scores;
+}
+
+function average(values: number[]) {
+  return values.length ? Math.round(values.reduce((sum, value) => sum + value, 0) / values.length) : 0;
+}
+
+async function recomputeScoreSummaryFromDetails(studentId: string, subject: string, academicYear: string, semester: string) {
+  if (!pool) return;
+  const [rows] = await pool.query<any[]>(
+    `SELECT assessment_type, scope_label, objective_label, score
+     FROM student_score_details
+     WHERE student_id = ? AND subject = ? AND academic_year = ? AND semester = ? AND score IS NOT NULL`,
+    [studentId, subject, academicYear, semester]
+  );
+  const detailScores = rows.map((row) => Number(row.score)).filter((value) => Number.isFinite(value));
+  const formatifScores = rows
+    .filter((row) => String(row.assessment_type).toUpperCase().includes("FORMATIF"))
+    .map((row) => Number(row.score))
+    .filter((value) => Number.isFinite(value));
+  const sumatifLingkup = rows.filter((row) => String(row.assessment_type).toUpperCase().includes("SUMATIF LINGKUP"));
+  const sumatifAkhir = rows
+    .filter((row) => String(row.assessment_type).toUpperCase().includes("SUMATIF AKHIR"))
+    .map((row) => Number(row.score))
+    .filter((value) => Number.isFinite(value));
+  const byScope = (scope: string) =>
+    sumatifLingkup
+      .filter((row) => String(row.scope_label).toUpperCase() === scope || String(row.objective_label).toUpperCase() === scope)
+      .map((row) => Number(row.score))
+      .filter((value) => Number.isFinite(value));
+  await upsertScore(studentId, {
+    subject,
+    academicYear,
+    semester,
+    kkm: 70,
+    tugas: average(formatifScores),
+    uh1: average(byScope("LM1")),
+    uh2: average(byScope("LM2")),
+    uts: average(sumatifAkhir),
+    uas: average(byScope("LM3").concat(byScope("LM4"), byScope("LM5"))),
+    rataRata: average(detailScores),
+  });
+}
+
+export async function saveScoreDetails(studentId: string, details: StudentScoreDetail[]) {
+  if (!isDbActive || !pool) {
+    IN_MEMORY_DB.scoreDetails = details;
+    return details;
+  }
+  const touched = new Set<string>();
+  for (const detail of details) {
+    const subject = (detail.subject || "Matematika").trim();
+    const academicYear = (detail.academicYear || DEFAULT_SCHOOL_SETTINGS.academicYear || "2025-2026").trim();
+    const semester = (detail.semester || DEFAULT_SCHOOL_SETTINGS.semester || "1-2").trim();
+    const assessmentType = (detail.assessmentType || "FORMATIF").trim();
+    const scopeLabel = (detail.scopeLabel || "-").trim();
+    const objectiveLabel = (detail.objectiveLabel || "-").trim();
+    const score = detail.score === null || detail.score === undefined || Number.isNaN(Number(detail.score))
+      ? null
+      : Math.max(0, Math.min(100, Number(detail.score)));
+    await pool.query(
+      `INSERT INTO student_score_details
+        (student_id, subject, academic_year, semester, assessment_type, scope_label, objective_label, score, note, source_file)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+       ON DUPLICATE KEY UPDATE score=VALUES(score), note=VALUES(note), source_file=VALUES(source_file)`,
+      [studentId, subject, academicYear, semester, assessmentType, scopeLabel, objectiveLabel, score, detail.note || null, detail.sourceFile || null]
+    );
+    touched.add([subject, academicYear, semester].join("\u0001"));
+  }
+  for (const key of touched) {
+    const [subject, academicYear, semester] = key.split("\u0001");
+    await recomputeScoreSummaryFromDetails(studentId, subject, academicYear, semester);
+  }
+  const [rows] = await pool.query<any[]>(
+    "SELECT * FROM student_score_details WHERE student_id = ? ORDER BY subject ASC, academic_year ASC, semester ASC, assessment_type ASC, scope_label ASC, objective_label ASC",
+    [studentId]
+  );
+  return rows.map(rowToScoreDetail);
 }
 
 export async function saveAttendance(month: string, record: AttendanceRecord, studentId = "20240012") {
@@ -1142,7 +1359,7 @@ export async function saveChatbotBackup(input: { studentId?: string; studentName
 }
 
 function monthlyQuotaLimit(role: Role) {
-  return role === "Guru" || role === "kepalasekolah" ? 40 : 20;
+  return role === "WaliKelas" || role === "Guru" || role === "kepalasekolah" ? 40 : 20;
 }
 
 function currentQuotaPeriod() {
@@ -1246,7 +1463,7 @@ export async function releaseAIChatQuota(user: User) {
 export async function getChatbotBackups(viewer: User): Promise<ChatbotBackup[]> {
   if (!isDbActive || !pool) {
     const records = IN_MEMORY_DB.chatbotBackups || [];
-    if (viewer.role === "Guru") {
+    if (viewer.role === "WaliKelas") {
       const visible = await getVisibleStudents(viewer);
       const allowedIds = new Set(visible.map((student) => student.id));
       return records.filter((record) => record.studentId && allowedIds.has(record.studentId));
@@ -1254,7 +1471,7 @@ export async function getChatbotBackups(viewer: User): Promise<ChatbotBackup[]> 
     return records;
   }
 
-  if (viewer.role === "Guru") {
+  if (viewer.role === "WaliKelas") {
     const visible = await getVisibleStudents(viewer);
     const allowedIds = visible.map((student) => student.id);
     if (!allowedIds.length) return [];
@@ -1267,13 +1484,57 @@ export async function getChatbotBackups(viewer: User): Promise<ChatbotBackup[]> 
   return rows.map(rowToChatbotBackup);
 }
 
-export async function createStudent(input: { name: string; nis: string; className: string; parentName?: string; parentId?: string; userId?: string }) {
+type StudentBiodataInput = {
+  nisn?: string;
+  gender?: string;
+  birthPlace?: string;
+  birthDate?: string;
+  religion?: string;
+  previousSchool?: string;
+  address?: string;
+  district?: string;
+  city?: string;
+  province?: string;
+  fatherName?: string;
+  motherName?: string;
+  fatherJob?: string;
+  motherJob?: string;
+  parentAddressStreet?: string;
+  parentAddressVillage?: string;
+};
+
+const studentBiodataColumnMap: Record<keyof StudentBiodataInput, string> = {
+  nisn: "nisn",
+  gender: "gender",
+  birthPlace: "birth_place",
+  birthDate: "birth_date",
+  religion: "religion",
+  previousSchool: "previous_school",
+  address: "address",
+  district: "district",
+  city: "city",
+  province: "province",
+  fatherName: "father_name",
+  motherName: "mother_name",
+  fatherJob: "father_job",
+  motherJob: "mother_job",
+  parentAddressStreet: "parent_address_street",
+  parentAddressVillage: "parent_address_village",
+};
+
+function studentBiodataColumns(input: StudentBiodataInput) {
+  return Object.fromEntries(
+    Object.entries(studentBiodataColumnMap).map(([key, column]) => [column, (input as any)[key] || null])
+  );
+}
+
+export async function createStudent(input: { name: string; nis: string; className: string; parentName?: string; parentId?: string; userId?: string } & StudentBiodataInput) {
   const id = input.nis || `s_${Date.now()}`;
   if (!isDbActive || !pool) {
     if (!(IN_MEMORY_DB.classes || []).some((classRoom) => classRoom.name === input.className)) throw new Error("Kelas tidak ditemukan di database kelas.");
     const parent = (IN_MEMORY_DB.users || []).find((user) => user.id === input.parentId && user.role === "orangtua");
     if (!parent) throw new Error("Orang tua tidak ditemukan di database orang tua.");
-    const student = { id, name: input.name, nis: input.nis, className: input.className, parentName: parent.name || parent.username, parentId: parent.id, userId: input.userId };
+    const student = { id, ...input, parentName: parent.name || parent.username, parentId: parent.id };
     IN_MEMORY_DB.students = [...(IN_MEMORY_DB.students || []), student];
     return student;
   }
@@ -1281,10 +1542,128 @@ export async function createStudent(input: { name: string; nis: string; classNam
   if (!classRows[0]) throw new Error("Kelas tidak ditemukan di database kelas.");
   const [parentRows] = await pool.query<any[]>("SELECT id, name, username FROM users WHERE id = ? AND role = 'orangtua' LIMIT 1", [input.parentId]);
   if (!parentRows[0]) throw new Error("Orang tua tidak ditemukan di database orang tua.");
-  await pool.query("INSERT INTO students (id, name, class_name, nis, parent_name, parent_id, user_id) VALUES (?, ?, ?, ?, ?, ?, ?)", [id, input.name, input.className, input.nis, parentRows[0].name || parentRows[0].username, parentRows[0].id, input.userId || null]);
+  const columns = {
+    name: input.name,
+    class_name: input.className,
+    nis: input.nis,
+    parent_name: parentRows[0].name || parentRows[0].username,
+    parent_id: parentRows[0].id,
+    user_id: input.userId || null,
+    ...studentBiodataColumns(input),
+  };
+  await pool.query(
+    `INSERT INTO students (id, ${Object.keys(columns).join(", ")}) VALUES (?, ${Object.keys(columns).map(() => "?").join(", ")})`,
+    [id, ...Object.values(columns)]
+  );
   for (const score of DEFAULT_SCORES) await upsertScore(id, score);
   for (const att of DEFAULT_ATTENDANCE) await upsertAttendance(id, att);
   return (await getAllStudents()).find((s) => s.id === id);
+}
+
+export type StudentImportInput = {
+  name: string;
+  nis: string;
+  className: string;
+} & StudentBiodataInput;
+
+function generatedId(prefix: string) {
+  return `${prefix}_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
+}
+
+function normalizeUsername(value: string) {
+  return value.toLowerCase().replace(/[^a-z0-9]+/g, "_").replace(/^_+|_+$/g, "").slice(0, 40) || "user";
+}
+
+async function ensureParentForImportedStudent(input: StudentImportInput) {
+  const parentName = input.motherName || input.fatherName || `Orang Tua ${input.name}`;
+  if (!isDbActive || !pool) {
+    const existing = (IN_MEMORY_DB.users || []).find((user) => user.role === "orangtua" && (user.name || "").toLowerCase() === parentName.toLowerCase());
+    if (existing) return existing;
+    const username = normalizeUsername(`ortu_${input.nis}_${parentName}`);
+    const parent = { id: generatedId("u"), username, password: hashPassword(`ortu${String(input.nis).slice(-4) || "1234"}`), role: "orangtua" as Role, name: parentName };
+    IN_MEMORY_DB.users = [...(IN_MEMORY_DB.users || []), parent];
+    return parent;
+  }
+
+  const [existingRows] = await pool.query<any[]>(
+    "SELECT id, username, name FROM users WHERE role = 'orangtua' AND LOWER(name) = LOWER(?) LIMIT 1",
+    [parentName]
+  );
+  if (existingRows[0]) return existingRows[0];
+
+  const baseUsername = normalizeUsername(`ortu_${input.nis}`);
+  let username = baseUsername;
+  for (let i = 2; i < 100; i += 1) {
+    const [used] = await pool.query<any[]>("SELECT id FROM users WHERE LOWER(username) = LOWER(?) LIMIT 1", [username]);
+    if (!used[0]) break;
+    username = `${baseUsername}_${i}`;
+  }
+  const id = generatedId("u");
+  await pool.query(
+    "INSERT INTO users (id, username, password, role, name) VALUES (?, ?, ?, 'orangtua', ?)",
+    [id, username, hashPassword(`ortu${String(input.nis).slice(-4) || "1234"}`), parentName]
+  );
+  return { id, username, name: parentName };
+}
+
+export async function upsertImportedStudent(input: StudentImportInput) {
+  if (!isDbActive || !pool) {
+    if (!(IN_MEMORY_DB.classes || []).some((classRoom) => classRoom.name === input.className)) {
+      IN_MEMORY_DB.classes = [...(IN_MEMORY_DB.classes || []), { id: generatedId("c"), name: input.className }];
+    }
+    const parent = await ensureParentForImportedStudent(input);
+    const existing = (IN_MEMORY_DB.students || []).find((student) => student.nis === input.nis);
+    const student = { ...existing, ...input, id: existing?.id || input.nis, parentId: parent.id, parentName: parent.name || parent.username, enabled: existing?.enabled ?? true };
+    IN_MEMORY_DB.students = existing
+      ? (IN_MEMORY_DB.students || []).map((item) => item.id === existing.id ? student : item)
+      : [...(IN_MEMORY_DB.students || []), student];
+    return { student, action: (existing ? "updated" : "created") as "created" | "updated" };
+  }
+
+  const [classRows] = await pool.query<any[]>("SELECT id FROM classes WHERE name = ? LIMIT 1", [input.className]);
+  if (!classRows[0]) {
+    await pool.query("INSERT INTO classes (id, name) VALUES (?, ?)", [generatedId("c"), input.className]);
+  }
+  const parent = await ensureParentForImportedStudent(input);
+  const [existingRows] = await pool.query<any[]>("SELECT id FROM students WHERE nis = ? LIMIT 1", [input.nis]);
+  const columns = {
+    name: input.name,
+    class_name: input.className,
+    nis: input.nis,
+    nisn: input.nisn || null,
+    gender: input.gender || null,
+    birth_place: input.birthPlace || null,
+    birth_date: input.birthDate || null,
+    religion: input.religion || null,
+    previous_school: input.previousSchool || null,
+    address: input.address || null,
+    district: input.district || null,
+    city: input.city || null,
+    province: input.province || null,
+    father_name: input.fatherName || null,
+    mother_name: input.motherName || null,
+    father_job: input.fatherJob || null,
+    mother_job: input.motherJob || null,
+    parent_address_street: input.parentAddressStreet || null,
+    parent_address_village: input.parentAddressVillage || null,
+    parent_name: parent.name || parent.username,
+    parent_id: parent.id,
+  };
+  if (existingRows[0]) {
+    await pool.query(
+      `UPDATE students SET ${Object.keys(columns).map((column) => `${column} = ?`).join(", ")} WHERE id = ?`,
+      [...Object.values(columns), existingRows[0].id]
+    );
+    return { student: (await getAllStudents()).find((student) => student.id === existingRows[0].id), action: "updated" as const };
+  }
+  const id = input.nis;
+  await pool.query(
+    `INSERT INTO students (id, ${Object.keys(columns).join(", ")}) VALUES (?, ${Object.keys(columns).map(() => "?").join(", ")})`,
+    [id, ...Object.values(columns)]
+  );
+  for (const score of DEFAULT_SCORES) await upsertScore(id, score);
+  for (const att of DEFAULT_ATTENDANCE) await upsertAttendance(id, att);
+  return { student: (await getAllStudents()).find((student) => student.id === id), action: "created" as const };
 }
 
 export async function createTeacher(input: Omit<Teacher, "id">) {
@@ -1482,26 +1861,38 @@ export async function deleteUser(id: string) {
   return true;
 }
 
-export async function createClass(input: { name: string; homeroomTeacherId?: string }) {
+function normalizeClassSemester(value?: string | null) {
+  const semester = (value || DEFAULT_SCHOOL_SETTINGS.semester || "Genap").trim();
+  if (semester === "1") return "Ganjil";
+  if (semester === "2" || semester === "1-2") return "Genap";
+  if (semester === "Ganjil" || semester === "Genap") return semester;
+  throw new Error("Semester kelas hanya boleh Ganjil atau Genap.");
+}
+
+export async function createClass(input: { name: string; homeroomTeacherId?: string; academicYear?: string; semester?: string }) {
   const name = input.name.trim();
+  const academicYear = input.academicYear?.trim() || DEFAULT_SCHOOL_SETTINGS.academicYear;
+  const semester = normalizeClassSemester(input.semester);
   const id = `c_${name.toLowerCase().replace(/[^a-z0-9]+/g, "_")}_${Date.now()}`;
   if (!isDbActive || !pool) {
     if ((IN_MEMORY_DB.classes || []).some((item) => item.name.toLowerCase() === name.toLowerCase())) throw new Error("Nama kelas sudah digunakan.");
-    const classRoom = { id, name, homeroomTeacherId: input.homeroomTeacherId || undefined };
+    const classRoom = { id, name, academicYear, semester, homeroomTeacherId: input.homeroomTeacherId || undefined };
     IN_MEMORY_DB.classes = [...(IN_MEMORY_DB.classes || []), classRoom];
     return classRoom;
   }
-  await pool.query("INSERT INTO classes (id, name, homeroom_teacher_id) VALUES (?, ?, ?)", [id, name, input.homeroomTeacherId || null]);
-  return { id, name, homeroomTeacherId: input.homeroomTeacherId || undefined };
+  await pool.query("INSERT INTO classes (id, name, academic_year, semester, homeroom_teacher_id) VALUES (?, ?, ?, ?, ?)", [id, name, academicYear || null, semester || null, input.homeroomTeacherId || null]);
+  return { id, name, academicYear, semester, homeroomTeacherId: input.homeroomTeacherId || undefined };
 }
 
-export async function updateClass(id: string, input: { name: string; homeroomTeacherId?: string }) {
+export async function updateClass(id: string, input: { name: string; homeroomTeacherId?: string; academicYear?: string; semester?: string }) {
   const name = input.name.trim();
+  const academicYear = input.academicYear?.trim() || DEFAULT_SCHOOL_SETTINGS.academicYear;
+  const semester = normalizeClassSemester(input.semester);
   if (!isDbActive || !pool) {
     const current = (IN_MEMORY_DB.classes || []).find((item) => item.id === id);
     if (!current) throw new Error("Data kelas tidak ditemukan.");
     IN_MEMORY_DB.students = (IN_MEMORY_DB.students || []).map((student) => student.className === current.name ? { ...student, className: name } : student);
-    IN_MEMORY_DB.classes = (IN_MEMORY_DB.classes || []).map((item) => item.id === id ? { ...item, name, homeroomTeacherId: input.homeroomTeacherId || undefined } : item);
+    IN_MEMORY_DB.classes = (IN_MEMORY_DB.classes || []).map((item) => item.id === id ? { ...item, name, academicYear, semester, homeroomTeacherId: input.homeroomTeacherId || undefined } : item);
     return (IN_MEMORY_DB.classes || []).find((item) => item.id === id);
   }
   const connection = await pool.getConnection();
@@ -1509,11 +1900,11 @@ export async function updateClass(id: string, input: { name: string; homeroomTea
     await connection.beginTransaction();
     const [rows] = await connection.query<any[]>("SELECT name FROM classes WHERE id = ? FOR UPDATE", [id]);
     if (!rows[0]) throw new Error("Data kelas tidak ditemukan.");
-    await connection.query("UPDATE classes SET name = ?, homeroom_teacher_id = ? WHERE id = ?", [name, input.homeroomTeacherId || null, id]);
+    await connection.query("UPDATE classes SET name = ?, academic_year = ?, semester = ?, homeroom_teacher_id = ? WHERE id = ?", [name, academicYear || null, semester || null, input.homeroomTeacherId || null, id]);
     await connection.query("UPDATE students SET class_name = ? WHERE class_name = ?", [name, rows[0].name]);
     await connection.query("UPDATE teachers SET class_name = ? WHERE class_name = ?", [name, rows[0].name]);
     await connection.commit();
-    return { id, name, homeroomTeacherId: input.homeroomTeacherId || undefined };
+    return { id, name, academicYear, semester, homeroomTeacherId: input.homeroomTeacherId || undefined };
   } catch (err) {
     await connection.rollback();
     throw err;
@@ -1538,7 +1929,7 @@ export async function deleteClass(id: string) {
   return true;
 }
 
-export async function updateStudent(id: string, input: Partial<{ name: string; nis: string; className: string; parentName?: string; parentId?: string; userId?: string; enabled?: boolean }>) {
+export async function updateStudent(id: string, input: Partial<{ name: string; nis: string; className: string; parentName?: string; parentId?: string; userId?: string; enabled?: boolean } & StudentBiodataInput>) {
   if (!isDbActive || !pool) {
     if (input.className && !(IN_MEMORY_DB.classes || []).some((classRoom) => classRoom.name === input.className)) throw new Error("Kelas tidak ditemukan di database kelas.");
     if (input.parentId) {
@@ -1558,7 +1949,7 @@ export async function updateStudent(id: string, input: Partial<{ name: string; n
     if (!parentRows[0]) throw new Error("Orang tua tidak ditemukan di database orang tua.");
     input = { ...input, parentId: parentRows[0].id, parentName: parentRows[0].name || parentRows[0].username };
   }
-  const map = { name: "name", nis: "nis", className: "class_name", parentName: "parent_name", parentId: "parent_id", userId: "user_id", enabled: "enabled" };
+  const map = { name: "name", nis: "nis", className: "class_name", parentName: "parent_name", parentId: "parent_id", userId: "user_id", enabled: "enabled", ...studentBiodataColumnMap };
   const fields: string[] = [];
   const params: any[] = [];
   for (const [key, column] of Object.entries(map)) {

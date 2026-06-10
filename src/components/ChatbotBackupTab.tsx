@@ -1,6 +1,7 @@
 import React, { useEffect, useMemo, useState } from "react";
 import { ChatbotBackup } from "../types";
 import { Download, MessageCircle, RefreshCw, Search } from "lucide-react";
+import { buildExcel, downloadBlob } from "../utils/excelExport";
 
 interface ChatbotBackupTabProps {
   sessionToken: string;
@@ -19,17 +20,9 @@ function formatDate(value: string) {
 
 function downloadText(filename: string, content: string, type: string) {
   const blob = new Blob([content], { type });
-  const url = URL.createObjectURL(blob);
-  const link = document.createElement("a");
-  link.href = url;
-  link.download = filename;
-  link.click();
-  URL.revokeObjectURL(url);
+  downloadBlob(filename, blob);
 }
 
-function csvCell(value = "") {
-  return `"${String(value).replace(/"/g, '""')}"`;
-}
 
 export default function ChatbotBackupTab({ sessionToken }: ChatbotBackupTabProps) {
   const [backups, setBackups] = useState<ChatbotBackup[]>([]);
@@ -94,7 +87,7 @@ export default function ChatbotBackupTab({ sessionToken }: ChatbotBackupTabProps
     downloadText(`backup-chatbot-ai${filenameSuffix}.json`, JSON.stringify(filteredBackups, null, 2), "application/json");
   };
 
-  const exportCsv = () => {
+  const exportExcel = async () => {
     const header = ["Waktu", "Portal", "Nama User", "Role", "Nama Murid", "Pertanyaan", "Jawaban"];
     const rows = filteredBackups.map((item) => [
       formatDate(item.createdAt),
@@ -105,8 +98,8 @@ export default function ChatbotBackupTab({ sessionToken }: ChatbotBackupTabProps
       item.question,
       item.answer,
     ]);
-    const csv = [header, ...rows].map((row) => row.map(csvCell).join(",")).join("\n");
-    downloadText(`backup-chatbot-ai${filenameSuffix}.csv`, csv, "text/csv;charset=utf-8");
+    const blob = await buildExcel([header, ...rows]);
+    downloadBlob(`backup-chatbot-ai${filenameSuffix}.xlsx`, blob);
   };
 
   return (
@@ -122,9 +115,9 @@ export default function ChatbotBackupTab({ sessionToken }: ChatbotBackupTabProps
               <RefreshCw className="w-4 h-4" />
               Muat Ulang
             </button>
-            <button onClick={exportCsv} disabled={!filteredBackups.length} className="inline-flex items-center gap-2 h-10 px-3 rounded-xl bg-emerald-500 text-slate-950 text-xs font-black hover:bg-emerald-400 disabled:opacity-50">
+            <button onClick={exportExcel} disabled={!filteredBackups.length} className="inline-flex items-center gap-2 h-10 px-3 rounded-xl bg-emerald-500 text-slate-950 text-xs font-black hover:bg-emerald-400 disabled:opacity-50">
               <Download className="w-4 h-4" />
-              Export CSV
+              Export Excel
             </button>
             <button onClick={exportJson} disabled={!filteredBackups.length} className="inline-flex items-center gap-2 h-10 px-3 rounded-xl bg-slate-900 text-white text-xs font-black hover:bg-slate-800 disabled:opacity-50">
               <Download className="w-4 h-4" />

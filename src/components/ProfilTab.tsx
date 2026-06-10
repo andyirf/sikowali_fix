@@ -11,6 +11,7 @@ interface ProfilTabProps {
 
 const roleLabel: Record<Role, string> = {
   orangtua: "Orang Tua",
+  WaliKelas: "Wali Kelas",
   Guru: "Guru",
   kepalasekolah: "Kepala Sekolah",
   Admin: "Admin",
@@ -81,7 +82,7 @@ export default function ProfilTab({ db, role, sessionToken, onRefresh }: ProfilT
   ];
 
   const roleDetails =
-    role === "Guru" && teacher
+    role === "WaliKelas" && teacher
       ? [
           { label: "Nama Guru", value: teacher.name },
           { label: "Kelas Wali", value: teacher.className },
@@ -221,7 +222,7 @@ export default function ProfilTab({ db, role, sessionToken, onRefresh }: ProfilT
 
       <div className="portal-soft-card p-5">
         <div className="flex items-center gap-2 mb-4">
-          {role === "Guru" || role === "kepalasekolah" ? <GraduationCap className="w-4 h-4 text-emerald-600" /> : role === "orangtua" ? <Users className="w-4 h-4 text-emerald-600" /> : <MapPin className="w-4 h-4 text-emerald-600" />}
+          {role === "WaliKelas" || role === "Guru" || role === "kepalasekolah" ? <GraduationCap className="w-4 h-4 text-emerald-600" /> : role === "orangtua" ? <Users className="w-4 h-4 text-emerald-600" /> : <MapPin className="w-4 h-4 text-emerald-600" />}
           <h4 className="text-sm font-black text-slate-900">Detail Portal {roleLabel[role]}</h4>
         </div>
         <div className="grid grid-cols-1 md:grid-cols-2 gap-3">

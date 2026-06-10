@@ -20,7 +20,7 @@ const emptyForm = {
 
 export default function ParentingTab({ db, role, sessionToken, onRefresh }: ParentingTabProps) {
   const { parenting } = db;
-  const canManage = ["Guru", "kepalasekolah", "Admin"].includes(role);
+  const canManage = ["WaliKelas", "Guru", "kepalasekolah", "Admin"].includes(role);
   const [selectedArticleId, setSelectedArticleId] = useState<string | null>(null);
   const [form, setForm] = useState(emptyForm);
   const [editingId, setEditingId] = useState("");

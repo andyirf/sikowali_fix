@@ -31,40 +31,40 @@ interface SidebarProps {
 }
 
 export default function Sidebar({ currentTab, setTab, role, unreadCount, schoolSettings }: SidebarProps) {
-  const roleLabel = role === "orangtua" ? "Orang Tua" : role === "kepalasekolah" ? "Kepala Sekolah" : role;
+  const roleLabel = role === "orangtua" ? "Orang Tua" : role === "WaliKelas" ? "Wali Kelas" : role === "kepalasekolah" ? "Kepala Sekolah" : role;
   const schoolName = schoolSettings?.name || "SIKOWALI";
   const logoUrl = schoolSettings?.logoUrl || "";
   // Navigation menus categorized by sections
   const menuUtama = [
-    { id: "beranda", label: "Beranda", icon: Home, roles: ["orangtua", "Guru", "kepalasekolah", "Admin", "Administrator", "Murid"] },
+    { id: "beranda", label: "Beranda", icon: Home, roles: ["orangtua", "WaliKelas", "Guru", "kepalasekolah", "Admin", "Administrator", "Murid"] },
   ];
 
   const menuInfoAnak = [
-    { id: "rapor", label: "Nilai & Rapor", icon: FileText, roles: ["orangtua", "Guru", "kepalasekolah", "Murid"] },
-    { id: "absensi", label: "Absensi", icon: Calendar, roles: ["orangtua", "Guru", "kepalasekolah", "Murid"] },
-    { id: "catatan", label: "Catatan Perilaku", icon: MessageSquare, roles: ["orangtua", "Guru", "kepalasekolah"] },
-    { id: "karya", label: "Dokumentasi & Karya", icon: LayoutGrid, roles: ["orangtua", "Guru", "kepalasekolah", "Murid"] },
+    { id: "rapor", label: "Nilai & Rapor", icon: FileText, roles: ["orangtua", "WaliKelas", "Guru", "kepalasekolah", "Murid"] },
+    { id: "absensi", label: "Absensi", icon: Calendar, roles: ["orangtua", "WaliKelas", "Guru", "kepalasekolah", "Murid"] },
+    { id: "catatan", label: "Catatan Perilaku", icon: MessageSquare, roles: ["orangtua", "WaliKelas", "Guru", "kepalasekolah"] },
+    { id: "karya", label: "Dokumentasi & Karya", icon: LayoutGrid, roles: ["orangtua", "WaliKelas", "Guru", "kepalasekolah", "Murid"] },
   ];
 
   const menuAIKomunikasi = [
-    { id: "analisisAI", label: "Analisis AI", icon: Sparkles, roles: ["orangtua", "Guru", "kepalasekolah"] },
-    { id: "chatbot", label: "Chatbot Sikowali", icon: MessageCircle, roles: ["orangtua", "Guru", "kepalasekolah", "Murid"] },
-    { id: "backupChatbot", label: "Backup Chatbot", icon: Archive, roles: ["Guru", "Admin", "Administrator"] },
-    { id: "notifikasi", label: "Notifikasi", icon: Bell, badge: unreadCount, roles: ["orangtua", "Guru", "Murid"] },
-    { id: "pengumuman", label: "Pengumuman", icon: Volume2, roles: ["orangtua", "Guru", "Admin", "Administrator", "Murid"] },
-    { id: "parenting", label: "Ruang Parenting", icon: BookOpen, roles: ["orangtua", "Guru", "kepalasekolah", "Admin", "Administrator"] },
-    { id: "wall", label: "Masukkan Wall", icon: MessageSquare, roles: ["orangtua", "Guru", "Admin", "Administrator"] },
+    { id: "analisisAI", label: "Analisis AI", icon: Sparkles, roles: ["orangtua", "WaliKelas", "Guru", "kepalasekolah"] },
+    { id: "chatbot", label: "Chatbot Sikowali", icon: MessageCircle, roles: ["orangtua", "WaliKelas", "Guru", "kepalasekolah", "Murid"] },
+    { id: "backupChatbot", label: "Backup Chatbot", icon: Archive, roles: ["WaliKelas", "Admin", "Administrator"] },
+    { id: "notifikasi", label: "Notifikasi", icon: Bell, badge: unreadCount, roles: ["orangtua", "WaliKelas", "Murid"] },
+    { id: "pengumuman", label: "Pengumuman", icon: Volume2, roles: ["orangtua", "WaliKelas", "Guru", "Admin", "Administrator", "Murid"] },
+    { id: "parenting", label: "Ruang Parenting", icon: BookOpen, roles: ["orangtua", "WaliKelas", "Guru", "kepalasekolah", "Admin", "Administrator"] },
+    { id: "wall", label: "Masukkan Wall", icon: MessageSquare, roles: ["orangtua", "WaliKelas", "Guru", "Admin", "Administrator"] },
   ];
 
   const menuManajemen = [
-    { id: "inputNilai", label: "Input Nilai", icon: PlusCircle, roles: ["Guru"] },
-    { id: "inputAbsensi", label: "Input Absensi", icon: CheckSquare, roles: ["Guru"] },
-    { id: "rekapSemester", label: "Rekap Semester", icon: ClipboardList, roles: ["Guru"] },
-    { id: "manajemen", label: "Manajemen Data", icon: Database, roles: ["Admin", "Administrator", "Guru"] },
+    { id: "inputNilai", label: "Input Nilai", icon: PlusCircle, roles: ["WaliKelas", "Admin", "Administrator"] },
+    { id: "inputAbsensi", label: "Input Absensi", icon: CheckSquare, roles: ["WaliKelas"] },
+    { id: "rekapSemester", label: "Rekap Semester", icon: ClipboardList, roles: ["WaliKelas"] },
+    { id: "manajemen", label: "Manajemen Data", icon: Database, roles: ["Admin", "Administrator", "WaliKelas"] },
     { id: "dataSekolah", label: "Data Sekolah", icon: Building2, roles: ["Admin", "Administrator"] },
     { id: "settingAI", label: "Setting AI", icon: Settings, roles: ["Administrator"] },
     { id: "hakAkses", label: "Matriks Hak Akses", icon: Shield, roles: ["Administrator"] },
-    { id: "profil", label: "Profil Saya", icon: User, roles: ["orangtua", "Guru", "kepalasekolah", "Admin", "Administrator", "Murid"] },
+    { id: "profil", label: "Profil Saya", icon: User, roles: ["orangtua", "WaliKelas", "Guru", "kepalasekolah", "Admin", "Administrator", "Murid"] },
   ];
 
   const renderItem = (item: any) => {

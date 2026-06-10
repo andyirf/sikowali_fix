@@ -6,7 +6,9 @@ interface AbsensiTabProps {
   db: SIKOWALIDatabase;
 }
 
-const SEMESTER_MONTHS = {
+type Semester = "Ganjil" | "Genap";
+
+const SEMESTER_MONTHS: Record<Semester, string[]> = {
   Ganjil: ["Juli", "Agustus", "September", "Oktober", "November", "Desember"],
   Genap: ["Januari", "Februari", "Maret", "April", "Mei", "Juni"],
 };
@@ -39,7 +41,7 @@ function sumAttendance(records: AttendanceRecord[]) {
   return { hadir, sakit, izin, alpha, total, persentase };
 }
 
-function sortBySemester(records: AttendanceRecord[], semester: "Ganjil" | "Genap") {
+function sortBySemester(records: AttendanceRecord[], semester: Semester) {
   const monthOrder = SEMESTER_MONTHS[semester];
   return records
     .filter((record) => monthOrder.includes(record.month))
@@ -58,8 +60,29 @@ function displayDate(date: string) {
   });
 }
 
+function academicYearParts(value?: string) {
+  const parts = String(value || "").match(/\d{4}/g);
+  const startYear = Number(parts?.[0] || new Date().getFullYear());
+  const endYear = Number(parts?.[1] || startYear + 1);
+  return { startYear, endYear };
+}
+
+function isDateInAcademicSemester(date: string, semester: Semester, academicYear?: string) {
+  const parsedDate = new Date(`${date}T00:00:00`);
+  const { startYear, endYear } = academicYearParts(academicYear);
+  const year = parsedDate.getFullYear();
+  const month = monthName(date);
+  const expectedYear = semester === "Ganjil" ? startYear : endYear;
+
+  return year === expectedYear && (SEMESTER_MONTHS[semester] as readonly string[]).includes(month);
+}
+
+function percentageHeight(value: number) {
+  return `${Math.min(100, Math.max(0, value))}%`;
+}
+
 export default function AbsensiTab({ db }: AbsensiTabProps) {
-  const [selectedSemester, setSelectedSemester] = useState<"Ganjil" | "Genap">(() => normalizeSemester(db.schoolSettings?.semester));
+  const [selectedSemester, setSelectedSemester] = useState<Semester>(() => normalizeSemester(db.schoolSettings?.semester));
   const [selectedMonth, setSelectedMonth] = useState("all");
 
   useEffect(() => {
@@ -74,7 +97,11 @@ export default function AbsensiTab({ db }: AbsensiTabProps) {
   const summary = sumAttendance(visibleAttendance);
   const dailyRecords = (db.attendanceDaily || [])
     .filter((record) => record.studentId === db.student.id)
-    .filter((record) => selectedMonth !== "all" && monthName(record.date).toLowerCase() === selectedMonth.toLowerCase())
+    .filter((record) =>
+      selectedMonth !== "all" &&
+      isDateInAcademicSemester(record.date, selectedSemester, db.schoolSettings?.academicYear) &&
+      monthName(record.date).toLowerCase() === selectedMonth.toLowerCase()
+    )
     .sort((a, b) => b.date.localeCompare(a.date));
   const periodLabel = selectedMonth === "all" ? `Semester ${selectedSemester}` : `${selectedMonth} - Semester ${selectedSemester}`;
 
@@ -162,7 +189,7 @@ export default function AbsensiTab({ db }: AbsensiTabProps) {
 
         <div className="flex items-end justify-between h-40 max-w-xl mx-auto px-4 pt-4 border-b border-slate-100 gap-4 sm:gap-6">
           {visibleAttendance.length ? visibleAttendance.map((m) => {
-            const calculatedPercentageHeight = `${m.persentase}%`;
+            const calculatedPercentageHeight = percentageHeight(m.persentase);
             return (
               <div key={m.month} className="flex flex-col items-center flex-1 space-y-2 group">
                 <div className="relative w-full flex items-end justify-center h-28">
@@ -170,8 +197,7 @@ export default function AbsensiTab({ db }: AbsensiTabProps) {
                     Hadir: {m.hadir} hari • Sakit: {m.sakit} • Izin: {m.izin} • Alpha: {m.alpha}
                   </div>
                   <div
-                    className="w-full sm:w-10 bg-emerald-500/10 border border-emerald-500/20 rounded-t-lg transition-all duration-300 group-hover:bg-emerald-500/20 relative"
-                    style={{ height: calculatedPercentageHeight }}
+                    className="w-full sm:w-10 h-full bg-emerald-500/10 border border-emerald-500/20 rounded-t-lg transition-all duration-300 group-hover:bg-emerald-500/20 relative"
                   >
                     <div className="absolute inset-x-0 bottom-0 bg-emerald-500 rounded-t-lg transition-all duration-500 ease-out" style={{ height: calculatedPercentageHeight }} />
                   </div>

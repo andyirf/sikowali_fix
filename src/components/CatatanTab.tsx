@@ -16,8 +16,8 @@ const emptyForm = {
 
 export default function CatatanTab({ db, role, onAddBehaviour }: CatatanTabProps) {
   const { behaviour } = db;
-  const canAddBehaviour = role === "Guru" || role === "kepalasekolah";
-  const sourcePortal = role === "kepalasekolah" ? "Portal Kepala Sekolah" : "Portal Guru";
+  const canAddBehaviour = role === "WaliKelas" || role === "Guru" || role === "kepalasekolah";
+  const sourcePortal = role === "WaliKelas" ? "Portal Wali Kelas" : role === "kepalasekolah" ? "Portal Kepala Sekolah" : "Portal Guru";
   const [form, setForm] = useState(emptyForm);
   const [saving, setSaving] = useState(false);
   const [success, setSuccess] = useState(false);
@@ -85,7 +85,7 @@ export default function CatatanTab({ db, role, onAddBehaviour }: CatatanTabProps
           <div className="flex flex-wrap gap-2">
             <span className="inline-flex items-center gap-1.5 bg-emerald-50 text-emerald-700 border border-emerald-100 rounded-xl px-3 py-1.5 text-xs font-bold">
               <ShieldCheck className="w-3.5 h-3.5" />
-              Portal Guru dapat input
+              Portal Wali Kelas dan Guru dapat input
             </span>
             <span className="inline-flex items-center gap-1.5 bg-sky-50 text-sky-700 border border-sky-100 rounded-xl px-3 py-1.5 text-xs font-bold">
               <ShieldCheck className="w-3.5 h-3.5" />
@@ -209,7 +209,7 @@ export default function CatatanTab({ db, role, onAddBehaviour }: CatatanTabProps
         </div>
         <div className="space-y-1">
           <h4 className="text-xs font-bold text-emerald-400 tracking-wider uppercase">Akses Input Catatan</h4>
-          <p className="text-sm font-bold text-slate-100">Data catatan perilaku hanya dapat dimasukkan dari Portal Guru dan Portal Kepala Sekolah.</p>
+          <p className="text-sm font-bold text-slate-100">Data catatan perilaku hanya dapat dimasukkan dari Portal Wali Kelas, Portal Guru, dan Portal Kepala Sekolah.</p>
           <p className="text-xs text-slate-300">Portal Orang Tua menampilkan catatan sebagai informasi perkembangan anak, tanpa akses input.</p>
         </div>
       </div>

@@ -1,5 +1,5 @@
 import React, { useState } from "react";
-import { AlertCircle, Building2, CheckCircle, Edit3, Eye, EyeOff, GraduationCap, KeyRound, Power, Save, Trash2, UserCheck, Users, X } from "lucide-react";
+import { AlertCircle, Building2, CheckCircle, Edit3, Eye, EyeOff, FileSpreadsheet, GraduationCap, KeyRound, Power, Save, Trash2, Upload, UserCheck, Users, X } from "lucide-react";
 import { ClassRoom, ParentRegistration, Role, SIKOWALIDatabase, Student, Teacher, User } from "../types";
 
 interface ManajemenTabProps {
@@ -13,6 +13,7 @@ const roleOptions: { value: Role; label: string }[] = [
   { value: "Administrator", label: "Administrator" },
   { value: "Admin", label: "Admin" },
   { value: "kepalasekolah", label: "Kepala Sekolah" },
+  { value: "WaliKelas", label: "Wali Kelas" },
   { value: "Guru", label: "Guru" },
   { value: "orangtua", label: "Orang Tua" },
   { value: "Murid", label: "Murid" },
@@ -20,11 +21,14 @@ const roleOptions: { value: Role; label: string }[] = [
 
 const emptyUser = { name: "", username: "", password: "", role: "orangtua" as Role, email: "", phone: "" };
 const emptyTeacher = { name: "", className: "", position: "Wali Kelas", teacherNumber: "", phone: "", graduate: "", address: "", email: "", userId: "" };
-const emptyClass = { name: "", homeroomTeacherId: "" };
+const emptyClass = { name: "", homeroomTeacherId: "", academicYear: "", semester: "" };
+const emptyStudentBiodata = { nisn: "", gender: "", birthPlace: "", birthDate: "", religion: "", previousSchool: "", address: "", district: "", city: "", province: "", fatherName: "", motherName: "", fatherJob: "", motherJob: "", parentAddressStreet: "", parentAddressVillage: "" };
 
 export default function ManajemenTab({ db, role, sessionToken, onRefresh }: ManajemenTabProps) {
   const pageSize = 10;
   const isAdminLike = role === "Admin" || role === "Administrator";
+  const isWaliKelas = role === "WaliKelas";
+  const canManageParents = isAdminLike || isWaliKelas;
   const canCreatePrivilegedRoles = role === "Administrator";
   const availableRoleOptions = canCreatePrivilegedRoles ? roleOptions : roleOptions.filter((item) => !["Admin", "Administrator"].includes(item.value));
   const [activeMenu, setActiveMenu] = useState<"user" | "guru" | "murid" | "kelas" | "orangtua" | "registrasi">(isAdminLike ? "user" : "murid");
@@ -34,10 +38,11 @@ export default function ManajemenTab({ db, role, sessionToken, onRefresh }: Mana
   const [studentForm, setStudentForm] = useState({
     name: "",
     nis: "",
-    className: role === "Guru" ? db.visibleStudents?.[0]?.className || db.student.className : "",
+    className: isWaliKelas ? db.visibleStudents?.[0]?.className || db.student.className : "",
     parentName: "",
     parentId: "",
     userId: "",
+    ...emptyStudentBiodata,
   });
   const [editingUserId, setEditingUserId] = useState("");
   const [editingTeacherId, setEditingTeacherId] = useState("");
@@ -51,16 +56,19 @@ export default function ManajemenTab({ db, role, sessionToken, onRefresh }: Mana
   const [studentPage, setStudentPage] = useState(1);
   const [classPage, setClassPage] = useState(1);
   const [parentPage, setParentPage] = useState(1);
+  const [studentImportClass, setStudentImportClass] = useState(isWaliKelas ? db.visibleStudents?.[0]?.className || db.student.className : "");
+  const [studentImportFile, setStudentImportFile] = useState<File | null>(null);
+  const [studentImportResult, setStudentImportResult] = useState<{ totalRows: number; validRows: number; created?: number; updated?: number; errors: string[] } | null>(null);
 
   const parentUsers = (db.users || []).filter((u) => u.role === "orangtua");
   const studentUsers = (db.users || []).filter((u) => u.role === "Murid");
-  const teacherUsers = (db.users || []).filter((u) => u.role === "Guru");
+  const teacherUsers = (db.users || []).filter((u) => u.role === "WaliKelas");
   const allUsers = role === "Administrator"
     ? db.users || []
     : (db.users || []).filter((user) => !["Admin", "Administrator"].includes(user.role));
   const allTeachers = db.teachers || [];
   const allClasses = db.classes || [];
-  const allowedClasses = role === "Guru"
+  const allowedClasses = isWaliKelas
     ? Array.from(new Set((db.visibleStudents || []).map((s) => s.className)))
     : (db.classes || []).map((c) => c.name);
   const studentsForTable = isAdminLike
@@ -128,7 +136,7 @@ export default function ManajemenTab({ db, role, sessionToken, onRefresh }: Mana
 
   const submitTeacher = async (e: React.FormEvent) => {
     e.preventDefault();
-    const payload = { ...teacherForm, className: teacherForm.position === "Kepala Sekolah" ? "-" : teacherForm.className };
+    const payload = { ...teacherForm, className: teacherForm.position === "Wali Kelas" ? teacherForm.className : "-" };
     await callJson(editingTeacherId ? `/api/admin/teachers/${editingTeacherId}` : "/api/admin/teachers", editingTeacherId ? "PUT" : "POST", payload, editingTeacherId ? "Data guru berhasil diperbarui." : "Data guru berhasil ditambahkan.");
     setTeacherForm(emptyTeacher);
     setEditingTeacherId("");
@@ -155,12 +163,40 @@ export default function ManajemenTab({ db, role, sessionToken, onRefresh }: Mana
     const selectedParent = parentUsers.find((parent) => parent.id === studentForm.parentId);
     const payload = {
       ...studentForm,
-      className: role === "Guru" ? allowedClasses[0] || studentForm.className : studentForm.className.trim(),
+      className: isWaliKelas ? allowedClasses[0] || studentForm.className : studentForm.className.trim(),
       parentName: selectedParent?.name || selectedParent?.username || "",
     };
     await callJson(editingStudentId ? `/api/admin/students/${editingStudentId}` : "/api/admin/students", editingStudentId ? "PUT" : "POST", payload, editingStudentId ? "Data murid berhasil diperbarui." : "Murid baru berhasil ditambahkan.");
-    setStudentForm({ name: "", nis: "", className: role === "Guru" ? allowedClasses[0] || db.student.className : "", parentName: "", parentId: "", userId: "" });
+    setStudentForm({ name: "", nis: "", className: isWaliKelas ? allowedClasses[0] || db.student.className : "", parentName: "", parentId: "", userId: "", ...emptyStudentBiodata });
     setEditingStudentId("");
+  };
+
+  const importStudentsFromExcel = async () => {
+    const targetClassName = isWaliKelas ? allowedClasses[0] || studentImportClass : studentImportClass;
+    if (!studentImportFile || !targetClassName) {
+      setMessage({ type: "error", text: "Pilih kelas dan file Excel terlebih dahulu." });
+      return;
+    }
+    setSaving(true);
+    setMessage(null);
+    setStudentImportResult(null);
+    try {
+      const fileData = await readFileAsDataUrl(studentImportFile);
+      const res = await fetch("/api/admin/students/import-excel", {
+        method: "POST",
+        headers: { "Content-Type": "application/json", "x-session-token": sessionToken },
+        body: JSON.stringify({ fileName: studentImportFile.name, fileData, className: targetClassName }),
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(data.error || "Gagal import Excel murid.");
+      setStudentImportResult({ totalRows: data.totalRows || 0, validRows: data.validRows || 0, created: data.created || 0, updated: data.updated || 0, errors: data.errors || [] });
+      setMessage({ type: data.errors?.length ? "error" : "success", text: data.errors?.length ? "Import selesai dengan beberapa baris gagal. Periksa detail di bawah." : "Import Excel murid berhasil." });
+      await onRefresh();
+    } catch (err: any) {
+      setMessage({ type: "error", text: err.message });
+    } finally {
+      setSaving(false);
+    }
   };
 
   const reviewRegistration = async (registration: ParentRegistration, action: "approve" | "reject") => {
@@ -192,7 +228,7 @@ export default function ManajemenTab({ db, role, sessionToken, onRefresh }: Mana
   const editStudent = (s: Student) => {
     setActiveMenu("murid");
     setEditingStudentId(s.id);
-    setStudentForm({ name: s.name, nis: s.nis, className: s.className, parentName: s.parentName || "", parentId: s.parentId || "", userId: s.userId || "" });
+    setStudentForm({ name: s.name, nis: s.nis, className: s.className, parentName: s.parentName || "", parentId: s.parentId || "", userId: s.userId || "", nisn: s.nisn || "", gender: s.gender || "", birthPlace: s.birthPlace || "", birthDate: s.birthDate || "", religion: s.religion || "", previousSchool: s.previousSchool || "", address: s.address || "", district: s.district || "", city: s.city || "", province: s.province || "", fatherName: s.fatherName || "", motherName: s.motherName || "", fatherJob: s.fatherJob || "", motherJob: s.motherJob || "", parentAddressStreet: s.parentAddressStreet || "", parentAddressVillage: s.parentAddressVillage || "" });
   };
 
   const editParent = (parent: User) => {
@@ -205,7 +241,7 @@ export default function ManajemenTab({ db, role, sessionToken, onRefresh }: Mana
   const editClass = (classRoom: ClassRoom) => {
     setActiveMenu("kelas");
     setEditingClassId(classRoom.id);
-    setClassForm({ name: classRoom.name, homeroomTeacherId: classRoom.homeroomTeacherId || "" });
+    setClassForm({ name: classRoom.name, homeroomTeacherId: classRoom.homeroomTeacherId || "", academicYear: classRoom.academicYear || "", semester: classRoom.semester || "" });
   };
 
   const cancelEdit = () => {
@@ -217,7 +253,7 @@ export default function ManajemenTab({ db, role, sessionToken, onRefresh }: Mana
     setShowPassword(false);
     setTeacherForm(emptyTeacher);
     setClassForm(emptyClass);
-    setStudentForm({ name: "", nis: "", className: role === "Guru" ? allowedClasses[0] || db.student.className : "", parentName: "", parentId: "", userId: "" });
+    setStudentForm({ name: "", nis: "", className: isWaliKelas ? allowedClasses[0] || db.student.className : "", parentName: "", parentId: "", userId: "", ...emptyStudentBiodata });
   };
 
   return (
@@ -234,10 +270,9 @@ export default function ManajemenTab({ db, role, sessionToken, onRefresh }: Mana
                 <MenuButton active={activeMenu === "user"} onClick={() => setActiveMenu("user")} label="Tambah User" />
                 <MenuButton active={activeMenu === "guru"} onClick={() => setActiveMenu("guru")} label="Tambah Guru" />
                 <MenuButton active={activeMenu === "kelas"} onClick={() => setActiveMenu("kelas")} label="Data Kelas" />
-                <MenuButton active={activeMenu === "orangtua"} onClick={() => setActiveMenu("orangtua")} label="Data Orang Tua" />
-                <MenuButton active={activeMenu === "registrasi"} onClick={() => setActiveMenu("registrasi")} label={`Verifikasi Orang Tua (${pendingRegistrations.length})`} />
               </>
             )}
+            {canManageParents && <MenuButton active={activeMenu === "orangtua"} onClick={() => setActiveMenu("orangtua")} label="Data Orang Tua" />}
             <MenuButton active={activeMenu === "murid"} onClick={() => setActiveMenu("murid")} label="Tambah Murid" />
           </div>
         </div>
@@ -254,7 +289,7 @@ export default function ManajemenTab({ db, role, sessionToken, onRefresh }: Mana
 
       {isAdminLike && activeMenu === "user" && (
         <form onSubmit={submitUser} className="bg-white border border-slate-100 rounded-xl p-5 shadow-sm space-y-4">
-          <SectionTitle icon={<Users className="w-4 h-4" />} title={editingUserId ? "Edit User" : "Tambah User"} description={canCreatePrivilegedRoles ? "Administrator dapat membuat semua role, termasuk Admin dan Administrator." : "Admin hanya dapat membuat role kepalasekolah, Guru, orangtua, dan Murid."} dark />
+          <SectionTitle icon={<Users className="w-4 h-4" />} title={editingUserId ? "Edit User" : "Tambah User"} description={canCreatePrivilegedRoles ? "Administrator dapat membuat semua role, termasuk Admin dan Administrator." : "Admin hanya dapat membuat role Wali Kelas, Guru, kepalasekolah, orangtua, dan Murid."} dark />
           <div className="grid sm:grid-cols-2 gap-3">
             <Field label="Nama Lengkap User">
               <input required value={userForm.name} onChange={(e) => setUserForm({ ...userForm, name: e.target.value })} placeholder="Nama lengkap" className="input-field" />
@@ -296,12 +331,13 @@ export default function ManajemenTab({ db, role, sessionToken, onRefresh }: Mana
             <Field label="Jabatan">
               <select value={teacherForm.position} onChange={(e) => setTeacherForm({ ...teacherForm, position: e.target.value })} className="input-field">
                 <option value="Wali Kelas">Wali Kelas</option>
+                <option value="Guru">Guru</option>
                 <option value="Kepala Sekolah">Kepala Sekolah</option>
               </select>
             </Field>
             <Field label="Kelas Wali">
-              <select required={teacherForm.position === "Wali Kelas"} disabled={teacherForm.position === "Kepala Sekolah"} value={teacherForm.position === "Kepala Sekolah" ? "" : teacherForm.className} onChange={(e) => setTeacherForm({ ...teacherForm, className: e.target.value })} className="input-field disabled:bg-slate-100">
-                <option value="">{teacherForm.position === "Kepala Sekolah" ? "Tidak mengampu kelas" : "Pilih kelas wali"}</option>
+              <select required={teacherForm.position === "Wali Kelas"} disabled={teacherForm.position !== "Wali Kelas"} value={teacherForm.position === "Wali Kelas" ? teacherForm.className : ""} onChange={(e) => setTeacherForm({ ...teacherForm, className: e.target.value })} className="input-field disabled:bg-slate-100">
+                <option value="">{teacherForm.position === "Wali Kelas" ? "Pilih kelas wali" : "Tidak mengampu kelas"}</option>
                 {allClasses.map((classRoom) => <option key={classRoom.id} value={classRoom.name}>{classRoom.name}</option>)}
               </select>
             </Field>
@@ -344,14 +380,24 @@ export default function ManajemenTab({ db, role, sessionToken, onRefresh }: Mana
                 {teacherUsers.map((teacher) => <option key={teacher.id} value={teacher.id}>{teacher.name || teacher.username}</option>)}
               </select>
             </Field>
+            <Field label="Tahun Ajaran">
+              <input required value={classForm.academicYear} onChange={(e) => setClassForm({ ...classForm, academicYear: e.target.value })} placeholder="Contoh: 2025/2026" className="input-field" />
+            </Field>
+            <Field label="Semester">
+              <select required value={classForm.semester} onChange={(e) => setClassForm({ ...classForm, semester: e.target.value })} className="input-field">
+                <option value="">Pilih semester</option>
+                <option value="Ganjil">Ganjil</option>
+                <option value="Genap">Genap</option>
+              </select>
+            </Field>
           </div>
           <FormActions saving={saving} label={editingClassId ? "Update Kelas" : "Simpan Kelas"} editing={!!editingClassId} onCancel={cancelEdit} />
         </form>
       )}
 
-      {isAdminLike && activeMenu === "orangtua" && (
+      {canManageParents && activeMenu === "orangtua" && (
         <form onSubmit={submitParent} className="bg-white border border-slate-100 rounded-xl p-5 shadow-sm space-y-4">
-          <SectionTitle icon={<UserCheck className="w-4 h-4" />} title={editingUserId ? "Edit Orang Tua" : "Tambah Orang Tua"} description="Akun tersimpan sebagai user role orangtua. Hubungkan akun ke anak melalui menu Data Murid." dark />
+          <SectionTitle icon={<UserCheck className="w-4 h-4" />} title={editingUserId ? "Edit Orang Tua" : "Tambah Orang Tua"} description={isWaliKelas ? "Wali kelas dapat menambahkan akun orang tua lalu menghubungkannya melalui data murid kelas wali." : "Akun tersimpan sebagai user role orangtua. Hubungkan akun ke anak melalui menu Data Murid."} dark />
           <div className="grid sm:grid-cols-2 gap-3">
             <Field label="Nama Orang Tua">
               <input required value={userForm.name} onChange={(e) => setUserForm({ ...userForm, name: e.target.value })} placeholder="Nama lengkap orang tua" className="input-field" />
@@ -379,41 +425,127 @@ export default function ManajemenTab({ db, role, sessionToken, onRefresh }: Mana
       )}
 
       {activeMenu === "murid" && (
-        <form onSubmit={submitStudent} className="bg-white border border-slate-100 rounded-xl p-5 shadow-sm space-y-4">
-          <SectionTitle icon={<GraduationCap className="w-4 h-4" />} title={editingStudentId ? "Edit Murid" : "Tambah Murid"} description={role === "Guru" ? "Guru hanya bisa menambahkan murid ke kelas wali yang ditugaskan." : "Pilih kelas dari database kelas agar penamaan tetap konsisten."} />
-          <div className="grid sm:grid-cols-2 gap-3">
-            <Field label="Nama Murid">
-              <input required value={studentForm.name} onChange={(e) => setStudentForm({ ...studentForm, name: e.target.value })} placeholder="Nama murid" className="input-field" />
-            </Field>
-            <Field label="NIS / Nomor Induk Siswa">
-              <input required value={studentForm.nis} onChange={(e) => setStudentForm({ ...studentForm, nis: e.target.value })} placeholder="NIS" className="input-field" />
-            </Field>
-            <Field label="Kelas Murid">
-              <select required value={role === "Guru" ? allowedClasses[0] || studentForm.className : studentForm.className} onChange={(e) => setStudentForm({ ...studentForm, className: e.target.value })} className="input-field">
-                <option value="">Pilih kelas</option>
-                {(role === "Guru" ? allowedClasses : allClasses.map((classRoom) => classRoom.name)).map((className) => (
-                  <option key={className} value={className}>{className}</option>
-                ))}
-              </select>
-            </Field>
-            <Field label="Nama Orang Tua">
-              <select required value={studentForm.parentId} onChange={(e) => {
-                const parent = parentUsers.find((item) => item.id === e.target.value);
-                setStudentForm({ ...studentForm, parentId: e.target.value, parentName: parent?.name || parent?.username || "" });
-              }} className="input-field">
-                <option value="">Pilih orang tua</option>
-                {parentUsers.map((u) => <option key={u.id} value={u.id}>{u.name || u.username}</option>)}
-              </select>
-            </Field>
-            <Field label="Akun Login Murid">
-              <select value={studentForm.userId} onChange={(e) => setStudentForm({ ...studentForm, userId: e.target.value })} className="input-field">
-                <option value="">Akun murid opsional</option>
-                {studentUsers.map((u) => <option key={u.id} value={u.id}>{u.name || u.username}</option>)}
-              </select>
-            </Field>
+        <div className="grid xl:grid-cols-[1.2fr_0.8fr] gap-4">
+          <form onSubmit={submitStudent} className="bg-white border border-slate-100 rounded-xl p-5 shadow-sm space-y-4">
+            <SectionTitle icon={<GraduationCap className="w-4 h-4" />} title={editingStudentId ? "Edit Murid" : "Tambah Murid"} description={isWaliKelas ? "Wali kelas hanya bisa menambahkan murid ke kelas wali yang ditugaskan." : "Pilih kelas dari database kelas agar penamaan tetap konsisten."} />
+            <div className="grid sm:grid-cols-2 gap-3">
+              <Field label="Nama Murid">
+                <input required value={studentForm.name} onChange={(e) => setStudentForm({ ...studentForm, name: e.target.value })} placeholder="Nama murid" className="input-field" />
+              </Field>
+              <Field label="NIS / Nomor Induk Siswa">
+                <input required value={studentForm.nis} onChange={(e) => setStudentForm({ ...studentForm, nis: e.target.value })} placeholder="NIS" className="input-field" />
+              </Field>
+              <Field label="Kelas Murid">
+                <select required value={isWaliKelas ? allowedClasses[0] || studentForm.className : studentForm.className} onChange={(e) => setStudentForm({ ...studentForm, className: e.target.value })} className="input-field">
+                  <option value="">Pilih kelas</option>
+                  {(isWaliKelas ? allowedClasses : allClasses.map((classRoom) => classRoom.name)).map((className) => (
+                    <option key={className} value={className}>{className}</option>
+                  ))}
+                </select>
+              </Field>
+              <Field label="Nama Orang Tua">
+                <select required value={studentForm.parentId} onChange={(e) => {
+                  const parent = parentUsers.find((item) => item.id === e.target.value);
+                  setStudentForm({ ...studentForm, parentId: e.target.value, parentName: parent?.name || parent?.username || "" });
+                }} className="input-field">
+                  <option value="">Pilih orang tua</option>
+                  {parentUsers.map((u) => <option key={u.id} value={u.id}>{u.name || u.username}</option>)}
+                </select>
+              </Field>
+              <Field label="Akun Login Murid">
+                <select value={studentForm.userId} onChange={(e) => setStudentForm({ ...studentForm, userId: e.target.value })} className="input-field">
+                  <option value="">Akun murid opsional</option>
+                  {studentUsers.map((u) => <option key={u.id} value={u.id}>{u.name || u.username}</option>)}
+                </select>
+              </Field>
+              <Field label="NISN">
+                <input value={studentForm.nisn} onChange={(e) => setStudentForm({ ...studentForm, nisn: e.target.value })} placeholder="NISN" className="input-field" />
+              </Field>
+              <Field label="Jenis Kelamin">
+                <select value={studentForm.gender} onChange={(e) => setStudentForm({ ...studentForm, gender: e.target.value })} className="input-field">
+                  <option value="">Pilih jenis kelamin</option>
+                  <option value="LAKI - LAKI">LAKI - LAKI</option>
+                  <option value="PEREMPUAN">PEREMPUAN</option>
+                </select>
+              </Field>
+              <Field label="Tempat Lahir">
+                <input value={studentForm.birthPlace} onChange={(e) => setStudentForm({ ...studentForm, birthPlace: e.target.value })} placeholder="Tempat lahir" className="input-field" />
+              </Field>
+              <Field label="Tanggal Lahir">
+                <input value={studentForm.birthDate} onChange={(e) => setStudentForm({ ...studentForm, birthDate: e.target.value })} placeholder="25 MARET 2014" className="input-field" />
+              </Field>
+              <Field label="Agama">
+                <input value={studentForm.religion} onChange={(e) => setStudentForm({ ...studentForm, religion: e.target.value })} placeholder="Agama" className="input-field" />
+              </Field>
+              <Field label="Pendidikan Sebelumnya">
+                <input value={studentForm.previousSchool} onChange={(e) => setStudentForm({ ...studentForm, previousSchool: e.target.value })} placeholder="TK/RA/PAUD" className="input-field" />
+              </Field>
+              <Field label="Alamat Peserta Didik">
+                <input value={studentForm.address} onChange={(e) => setStudentForm({ ...studentForm, address: e.target.value })} placeholder="Alamat siswa" className="input-field" />
+              </Field>
+              <Field label="Kec/Kab/Prov Siswa">
+                <input value={[studentForm.district, studentForm.city, studentForm.province].filter(Boolean).join(" / ")} onChange={(e) => {
+                  const [district = "", city = "", province = ""] = e.target.value.split("/").map((item) => item.trim());
+                  setStudentForm({ ...studentForm, district, city, province });
+                }} placeholder="Kec / Kab / Prov" className="input-field" />
+              </Field>
+              <Field label="Nama Ayah">
+                <input value={studentForm.fatherName} onChange={(e) => setStudentForm({ ...studentForm, fatherName: e.target.value })} placeholder="Nama ayah" className="input-field" />
+              </Field>
+              <Field label="Nama Ibu">
+                <input value={studentForm.motherName} onChange={(e) => setStudentForm({ ...studentForm, motherName: e.target.value })} placeholder="Nama ibu" className="input-field" />
+              </Field>
+              <Field label="Pekerjaan Ayah">
+                <input value={studentForm.fatherJob} onChange={(e) => setStudentForm({ ...studentForm, fatherJob: e.target.value })} placeholder="Pekerjaan ayah" className="input-field" />
+              </Field>
+              <Field label="Pekerjaan Ibu">
+                <input value={studentForm.motherJob} onChange={(e) => setStudentForm({ ...studentForm, motherJob: e.target.value })} placeholder="Pekerjaan ibu" className="input-field" />
+              </Field>
+              <Field label="Alamat Orang Tua">
+                <input value={studentForm.parentAddressStreet} onChange={(e) => setStudentForm({ ...studentForm, parentAddressStreet: e.target.value })} placeholder="Jalan/dusun" className="input-field" />
+              </Field>
+              <Field label="Desa Orang Tua">
+                <input value={studentForm.parentAddressVillage} onChange={(e) => setStudentForm({ ...studentForm, parentAddressVillage: e.target.value })} placeholder="Kelurahan/desa" className="input-field" />
+              </Field>
+            </div>
+            <FormActions saving={saving} label={editingStudentId ? "Update Murid" : "Simpan Murid"} editing={!!editingStudentId} onCancel={cancelEdit} emerald />
+          </form>
+
+          <div className="bg-white border border-slate-100 rounded-xl p-5 shadow-sm space-y-4">
+            <SectionTitle icon={<FileSpreadsheet className="w-4 h-4" />} title="Upload Excel Murid" description="Format biodata Excel dibaca dari kolom NIS, NISN, L/P, tempat lahir, tanggal lahir, alamat, dan orang tua." />
+            <div className="grid gap-3">
+              <Field label="Kelas Tujuan">
+                <select required value={isWaliKelas ? allowedClasses[0] || studentImportClass : studentImportClass} onChange={(e) => setStudentImportClass(e.target.value)} className="input-field">
+                  <option value="">Pilih kelas</option>
+                  {(isWaliKelas ? allowedClasses : allClasses.map((classRoom) => classRoom.name)).map((className) => (
+                    <option key={className} value={className}>{className}</option>
+                  ))}
+                </select>
+              </Field>
+              <Field label="File Excel">
+                <input type="file" accept=".xlsx,.xls" onChange={(e) => setStudentImportFile(e.target.files?.[0] || null)} className="input-field" />
+              </Field>
+              <div className="grid sm:grid-cols-2 gap-2">
+                <a href="/uploads/files/format_import_murid_sikowali.xlsx" download className="inline-flex items-center justify-center gap-2 px-4 py-3 rounded-lg bg-sky-50 text-sky-700 text-xs font-black hover:bg-sky-100">
+                  <FileSpreadsheet className="w-4 h-4" /> Contoh Format
+                </a>
+                <button type="button" disabled={saving || !studentImportFile} onClick={importStudentsFromExcel} className="inline-flex items-center justify-center gap-2 px-4 py-3 rounded-lg bg-slate-900 text-white text-xs font-black hover:bg-slate-800 disabled:opacity-50">
+                  <Upload className="w-4 h-4" /> Upload Murid
+                </button>
+              </div>
+              {studentImportResult && (
+                <div className="rounded-lg border border-slate-100 bg-slate-50 p-3 text-xs text-slate-600">
+                  <p className="font-black text-slate-800">Terbaca {studentImportResult.totalRows} baris, valid {studentImportResult.validRows}, baru {studentImportResult.created || 0}, update {studentImportResult.updated || 0}.</p>
+                  {studentImportResult.errors.length > 0 && (
+                    <ul className="mt-2 max-h-32 overflow-y-auto space-y-1 font-semibold text-red-600">
+                      {studentImportResult.errors.slice(0, 8).map((error) => <li key={error}>{error}</li>)}
+                    </ul>
+                  )}
+                </div>
+              )}
+            </div>
           </div>
-          <FormActions saving={saving} label={editingStudentId ? "Update Murid" : "Simpan Murid"} editing={!!editingStudentId} onCancel={cancelEdit} emerald />
-        </form>
+        </div>
       )}
 
       {isAdminLike && activeMenu === "registrasi" && (
@@ -515,13 +647,15 @@ export default function ManajemenTab({ db, role, sessionToken, onRefresh }: Mana
       )}
 
       {isAdminLike && activeMenu === "kelas" && (
-        <DataTable title="Database Kelas" headers={["Nama Kelas", "Wali Kelas", "Jumlah Murid", "Aksi"]} totalItems={allClasses.length} currentPage={currentClassPage} pageSize={pageSize} onPageChange={setClassPage}>
+        <DataTable title="Database Kelas" headers={["Nama Kelas", "Tahun Ajaran", "Semester", "Wali Kelas", "Jumlah Murid", "Aksi"]} totalItems={allClasses.length} currentPage={currentClassPage} pageSize={pageSize} onPageChange={setClassPage}>
           {paginatedClasses.map((classRoom) => {
             const homeroom = teacherUsers.find((teacher) => teacher.id === classRoom.homeroomTeacherId);
             const studentCount = (db.students || []).filter((student) => student.className === classRoom.name).length;
             return (
               <tr key={classRoom.id}>
                 <td className="px-4 py-3 font-bold text-slate-800">{classRoom.name}</td>
+                <td className="px-4 py-3">{classRoom.academicYear || "-"}</td>
+                <td className="px-4 py-3">{classRoom.semester || "-"}</td>
                 <td className="px-4 py-3">{homeroom?.name || homeroom?.username || "-"}</td>
                 <td className="px-4 py-3">{studentCount}</td>
                 <td className="px-4 py-3">
@@ -536,7 +670,7 @@ export default function ManajemenTab({ db, role, sessionToken, onRefresh }: Mana
         </DataTable>
       )}
 
-      {isAdminLike && activeMenu === "orangtua" && (
+      {canManageParents && activeMenu === "orangtua" && (
         <DataTable title="Database Orang Tua" headers={["Nama", "Username", "Kontak", "Anak Terhubung", "Status", "Aksi"]} totalItems={parentUsers.length} currentPage={currentParentPage} pageSize={pageSize} onPageChange={setParentPage}>
           {paginatedParents.map((parent) => {
             const linkedStudents = (db.students || []).filter((student) => student.parentId === parent.id);
@@ -555,11 +689,11 @@ export default function ManajemenTab({ db, role, sessionToken, onRefresh }: Mana
       )}
 
       {activeMenu === "murid" && (
-        <DataTable title={isAdminLike ? "Data Murid" : "Murid Dalam Kelas Wali"} headers={["Nama", "NIS", "Kelas", "Orang Tua", "Status", "Aksi"]} totalItems={studentsForTable.length} currentPage={currentStudentPage} pageSize={pageSize} onPageChange={setStudentPage}>
+        <DataTable title={isAdminLike ? "Data Murid" : "Murid Dalam Kelas Wali"} headers={["Nama", "NIS/NISN", "Kelas", "Orang Tua", "Status", "Aksi"]} totalItems={studentsForTable.length} currentPage={currentStudentPage} pageSize={pageSize} onPageChange={setStudentPage}>
           {paginatedStudents.map((s) => (
             <tr key={s.id}>
               <td className="px-4 py-3 font-bold text-slate-800">{s.name}</td>
-              <td className="px-4 py-3">{s.nis}</td>
+              <td className="px-4 py-3">{s.nis}<span className="block text-[10px] font-bold text-slate-400">{s.nisn || "-"}</span></td>
               <td className="px-4 py-3">{s.className}</td>
               <td className="px-4 py-3">{s.parentName || "-"}</td>
               <td className="px-4 py-3"><Status enabled={s.enabled !== false} /></td>
@@ -578,6 +712,15 @@ function MenuButton({ active, onClick, label }: { active: boolean; onClick: () =
       {label}
     </button>
   );
+}
+
+function readFileAsDataUrl(file: File) {
+  return new Promise<string>((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => resolve(String(reader.result || ""));
+    reader.onerror = () => reject(new Error("Gagal membaca file Excel."));
+    reader.readAsDataURL(file);
+  });
 }
 
 function SectionTitle({ icon, title, description, dark = false }: { icon: React.ReactNode; title: string; description: string; dark?: boolean }) {

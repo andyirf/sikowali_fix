@@ -27,9 +27,9 @@ Aplikasi membaca koneksi dari file `.env`:
 ```env
 DB_HOST="localhost"
 DB_PORT="3306"
-DB_USER="root"
-DB_PASSWORD=""
-DB_DATABASE="SIKOWALI"
+DB_USER="sikowali_app"
+DB_PASSWORD="ganti_dengan_password_database_yang_kuat"
+DB_DATABASE="SIKOWALI_v1"
 ```
 
 Saat server dijalankan, aplikasi otomatis:
@@ -41,19 +41,15 @@ Saat server dijalankan, aplikasi otomatis:
 Jika ingin membuat database manual lewat phpMyAdmin, import file:
 
 ```text
-SIKOWALI_ROLE_SCHEMA.sql
+docs/production_database_user.sql
 ```
 
-## Akun Demo
+## Catatan Produksi
 
-```text
-Admin          : admin  / password123
-Kepala Sekolah : kepala / password123
-Guru VII-A     : guru   / password123
-Guru VII-B     : guru2  / password123
-Orang Tua      : ortu   / ortu123
-Murid          : murid  / password123
-```
+- Jangan gunakan user database `root` di production.
+- Jangan commit file `.env`.
+- Buat `.env` produksi dari `.env.production.example`.
+- Ikuti checklist di `docs/PRODUCTION_CHECKLIST.md` sebelum go-live.
 
 ## Menjalankan dari VS Code di macOS
 

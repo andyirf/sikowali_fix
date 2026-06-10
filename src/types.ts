@@ -1,4 +1,4 @@
-export type Role = "orangtua" | "Guru" | "kepalasekolah" | "Admin" | "Administrator" | "Murid";
+export type Role = "orangtua" | "WaliKelas" | "Guru" | "kepalasekolah" | "Admin" | "Administrator" | "Murid";
 
 export interface User {
   id: string;
@@ -32,6 +32,22 @@ export interface Student {
   name: string;
   className: string;
   nis: string;
+  nisn?: string;
+  gender?: string;
+  birthPlace?: string;
+  birthDate?: string;
+  religion?: string;
+  previousSchool?: string;
+  address?: string;
+  district?: string;
+  city?: string;
+  province?: string;
+  fatherName?: string;
+  motherName?: string;
+  fatherJob?: string;
+  motherJob?: string;
+  parentAddressStreet?: string;
+  parentAddressVillage?: string;
   parentName?: string;
   parentId?: string;
   userId?: string;
@@ -99,10 +115,14 @@ export interface ClassRoom {
   id: string;
   name: string;
   homeroomTeacherId?: string;
+  academicYear?: string;
+  semester?: string;
 }
 
 export interface SubjectScore {
   subject: string;
+  academicYear?: string;
+  semester?: string;
   kkm: number;
   tugas: number;
   uh1: number;
@@ -110,6 +130,20 @@ export interface SubjectScore {
   uts: number;
   uas: number;
   rataRata: number;
+}
+
+export interface StudentScoreDetail {
+  id?: number;
+  studentId?: string;
+  subject: string;
+  academicYear: string;
+  semester: string;
+  assessmentType: string;
+  scopeLabel: string;
+  objectiveLabel: string;
+  score?: number | null;
+  note?: string;
+  sourceFile?: string;
 }
 
 export type DisciplineType = "Positif" | "Prestasi" | "Perlu Perhatian";
@@ -232,6 +266,7 @@ export interface SIKOWALIDatabase {
   teachers?: Teacher[];
   selectedClassName?: string;
   scores: SubjectScore[];
+  scoreDetails?: StudentScoreDetail[];
   attendance: AttendanceRecord[];
   attendanceDaily?: AttendanceDailyRecord[];
   behaviour: BehaviourLog[];

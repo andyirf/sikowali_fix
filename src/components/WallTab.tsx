@@ -1,6 +1,7 @@
 import React, { useState } from "react";
-import { SIKOWALIDatabase, ParentFeedback } from "../types";
+import { SIKOWALIDatabase } from "../types";
 import { Download, MessageCircle, Heart, Plus, Send } from "lucide-react";
+import { downloadExcel } from "../utils/excelExport";
 
 interface WallTabProps {
   db: SIKOWALIDatabase;
@@ -47,6 +48,21 @@ export default function WallTab({ db, onAddFeedback, onLikeFeedback, onAddFeedba
     setCommentInput("");
   };
 
+  const exportWallExcel = async () => {
+    const header = ["Tanggal", "Pengirim", "Jenis", "Isi Masukan", "Jumlah Suka", "Jumlah Komentar", "Komentar Sekolah"];
+    const rows = feedback.map((item) => [
+      item.date,
+      item.author,
+      item.type,
+      item.content,
+      String(item.likes),
+      String(item.comments.length),
+      item.comments.map((comment) => `${comment.date} - ${comment.author}: ${comment.text}`).join("\n"),
+    ]);
+    const schoolName = (db.schoolSettings?.name || "sikowali").toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "");
+    await downloadExcel(`backup-wall-${schoolName || "sikowali"}.xlsx`, [header, ...rows], "Backup Wall");
+  };
+
   return (
     <div className="space-y-6 max-w-4xl mx-auto animate-fade-in select-none">
       {/* Sentiment metric stats summary cards */}
@@ -71,11 +87,12 @@ export default function WallTab({ db, onAddFeedback, onLikeFeedback, onAddFeedba
           {role === "Admin" ? "Tambah Masukan Wall" : "Kirim Masukan Anda"}
         </button>
         <button
-          onClick={() => window.print()}
+          onClick={exportWallExcel}
+          disabled={!feedback.length}
           className="bg-slate-900 hover:bg-slate-800 text-white px-4 py-4 rounded-xl shadow font-black text-xs flex items-center justify-center gap-2 transition-all cursor-pointer"
         >
           <Download className="w-4.5 h-4.5" />
-          Backup Wall
+          Backup Wall Excel
         </button>
       </div>
 

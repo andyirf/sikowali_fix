@@ -69,6 +69,7 @@ const providerOptions = [
 ];
 
 export default function SettingAITab({ db, sessionToken, onRefresh }: SettingAITabProps) {
+  const canRestartApp = !import.meta.env.PROD;
   const currentProvider = providerOptions.find((item) => item.value === db.aiSettings?.provider) || providerOptions[0];
   const [form, setForm] = useState({
     provider: db.aiSettings?.provider || currentProvider.value,
@@ -150,15 +151,17 @@ export default function SettingAITab({ db, sessionToken, onRefresh }: SettingAIT
             <span className={`px-3 py-1 rounded-lg text-[10px] font-black ${form.enabled ? "bg-emerald-50 text-emerald-700" : "bg-slate-100 text-slate-500"}`}>
               {form.enabled ? `${form.provider} Aktif` : "AI Nonaktif"}
             </span>
-            <button
-              type="button"
-              onClick={restartApp}
-              disabled={restarting}
-              className="inline-flex items-center gap-2 px-3 py-2 rounded-xl bg-red-50 text-red-700 border border-red-100 text-xs font-black hover:bg-red-100 disabled:opacity-50"
-            >
-              <RefreshCw className={`w-4 h-4 ${restarting ? "animate-spin" : ""}`} />
-              {restarting ? "Restarting..." : "Restart Aplikasi"}
-            </button>
+            {canRestartApp && (
+              <button
+                type="button"
+                onClick={restartApp}
+                disabled={restarting}
+                className="inline-flex items-center gap-2 px-3 py-2 rounded-xl bg-red-50 text-red-700 border border-red-100 text-xs font-black hover:bg-red-100 disabled:opacity-50"
+              >
+                <RefreshCw className={`w-4 h-4 ${restarting ? "animate-spin" : ""}`} />
+                {restarting ? "Restarting..." : "Restart Aplikasi"}
+              </button>
+            )}
           </div>
         </div>
       </div>

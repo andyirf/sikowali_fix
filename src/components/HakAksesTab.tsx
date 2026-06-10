@@ -13,6 +13,7 @@ interface HakAksesTabProps {
 const roles: { key: Role; label: string }[] = [
   { key: "Administrator", label: "Administrator" },
   { key: "Admin", label: "Admin" },
+  { key: "WaliKelas", label: "Wali Kelas" },
   { key: "Guru", label: "Guru" },
   { key: "kepalasekolah", label: "Kepala Sekolah" },
   { key: "orangtua", label: "Orang Tua" },
