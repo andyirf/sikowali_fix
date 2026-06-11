@@ -240,9 +240,22 @@ let IN_MEMORY_DB: SIKOWALIDatabase = {
   users: DEFAULT_USERS,
 };
 
+function normalizeDatabaseHost(value = "") {
+  if (!value) return "localhost";
+  const clean = String(value).trim();
+  if (clean.startsWith("http://") || clean.startsWith("https://")) {
+    try {
+      return new URL(clean).hostname;
+    } catch {
+      return clean.replace("https://", "").replace("http://", "").replace(/\/$/, "");
+    }
+  }
+  return clean.replace(/\/$/, "");
+}
+
 function dbConfig() {
   return {
-    host: process.env.DB_HOST || "localhost",
+    host: normalizeDatabaseHost(process.env.DB_HOST),
     port: Number(process.env.DB_PORT || process.env.DB_POrt || 3306),
     user: process.env.DB_USER || "root",
     password: process.env.DB_PASSWORD || "",
